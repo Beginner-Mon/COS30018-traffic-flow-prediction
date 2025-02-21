@@ -99,13 +99,13 @@ def main(argv):
     print(f"Starting training process for {args.model} model...")
 
     lag = 12
-    config = {"batch": 256, "epochs": 470}
+    config = {"batch": 256, "epochs": 2}
     file1 = 'Scats2006.xls'
-    file2 = 'Scats2006.xls'
+    scat_no = 970
 
     print("Loading and processing data...")
     try:
-        X_train, y_train, _, _, _ = process_data(file1, file2, lag)
+        X_train, y_train, _, _, _ = process_data(file1, scat_no, lag)
         print("Data loaded successfully")
         print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
     except Exception as e:

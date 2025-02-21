@@ -23,16 +23,8 @@ def read_data(file,scat_no):
     testing_set = np.concatenate(testing_set[array].values)
 
     return training_set, testing_set
-def process_data(train, test, lags):
-    df1 = pd.read_excel(train, sheet_name="Data", header=0, skiprows=1)
-    df2 = pd.read_excel(test, sheet_name="Data", header=0, skiprows=1)
-
-    array = [f'V{i:02}' for i in range(96)]
-    df1 = df1[df1["SCATS Number"] == 970][ array]
-    df2 = df2[df2["SCATS Number"] == 970][ array]
-    # Print the resulting DataFrame
-    df1 = np.concatenate(df1[array].values)
-    df2 = np.concatenate(df2[array].values)
+def process_data(train, scat_no, lags):
+    df1, df2 = read_data(train,scat_no)
     
     
     scaler = MinMaxScaler(feature_range=(0,1))
@@ -61,4 +53,4 @@ def process_data(train, test, lags):
 
 if __name__ == "__main__":
 
-    print(read_data('./Scats2006.xls',970))
+    print(process_data("Scats2006.xls",970,12))
