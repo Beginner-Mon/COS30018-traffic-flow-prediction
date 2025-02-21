@@ -10,8 +10,7 @@ def read_data(file,scat_no):
    
     df1["Date"] = pd.to_datetime(df1['Date'])
 
-    unique_locations = df1['Location'].unique()
-    print("unique location")
+ 
     
 
     
