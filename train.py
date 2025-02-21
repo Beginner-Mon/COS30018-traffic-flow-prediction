@@ -39,7 +39,7 @@ def train_model(model, X_train, y_train, name, config):
         verbose=1)  # Added verbose=1 to see training progress
 
     print(f"Saving {name} model...")
-    model.save('model/' + name + '.h5', save_format='h5')
+    model.save('model/' + name + '.keras')
     df = pd.DataFrame.from_dict(hist.history)
     df.to_csv('model/' + name + ' loss.csv', encoding='utf-8', index=False)
     print(f"Training completed for {name}")
@@ -99,7 +99,7 @@ def main(argv):
     print(f"Starting training process for {args.model} model...")
 
     lag = 12
-    config = {"batch": 256, "epochs": 2}
+    config = {"batch": 256, "epochs": 470}
     file1 = 'Scats2006.xls'
     file2 = 'Scats2006.xls'
 
