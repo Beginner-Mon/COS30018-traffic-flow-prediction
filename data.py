@@ -13,18 +13,11 @@ def read_data(file,scat_no):
     unique_locations = df1['Location'].unique()
     print("unique location")
     
-    while True:
-        print("select location")
-        for i in range(0, len(unique_locations)):
-            print(f"{i} {unique_locations[i]}")
-        choice = input("enter the number of the location you want to select:")
-        if choice.isdigit() and 0 <= int(choice) < len(unique_locations):
-            choice = int(choice)
-            break
+
     
     
-    training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26') & (df1["Location"] == unique_locations[choice])]
-    testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01') & (df1["Location"] == unique_locations[choice])]
+    training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
+    testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01')]
    
     # df1 = np.concatenate(df1[array].values)
     training_set = np.concatenate(training_set[array].values)
