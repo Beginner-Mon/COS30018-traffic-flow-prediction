@@ -99,7 +99,7 @@ def main(argv):
     print(f"Starting training process for {args.model} model...")
 
     lag = 12
-    config = {"batch": 256, "epochs": 470}
+    config = {"batch": 256, "epochs": 2}
     file1 = 'Scats2006.xls'
     scat_no = 970
 
