@@ -95,9 +95,9 @@ def main():
         'mape': 'mape'  # metrics can be passed as strings
     }
 
-    lstm = load_model(f'model/lstm/lstm  970.keras', custom_objects=custom_objects)
-    gru = load_model(f'model/gru/gru  970.keras', custom_objects=custom_objects)
-    saes = load_model(f'model/saes/saes  970.keras', custom_objects=custom_objects)
+    lstm = load_model(f'model/lstm/lstm 970.keras', custom_objects=custom_objects)
+    gru = load_model(f'model/gru/gru 970.keras', custom_objects=custom_objects)
+    saes = load_model(f'model/saes/saes 970.keras', custom_objects=custom_objects)
     models = [lstm, gru, saes]
     names = ['LSTM', 'GRU', 'SAEs']
 
