@@ -23,8 +23,9 @@ def read_data(file,scat_no):
     testing_set = np.concatenate(testing_set[array].values)
 
     return training_set, testing_set
-def process_data(train, scat_no, lags):
-    df1, df2 = read_data(train,scat_no)
+
+def process_data(file, scat_no, lags):
+    df1, df2 = read_data(file,scat_no)
     
     
     scaler = MinMaxScaler(feature_range=(0,1))
