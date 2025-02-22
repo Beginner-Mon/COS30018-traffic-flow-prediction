@@ -39,9 +39,9 @@ def train_model(model, X_train, y_train, name, config):
         verbose=1)  # Added verbose=1 to see training progress
 
     print(f"Saving {name['model']} model...")
-    model.save(f"model/{name['model']}/{name['model']} {name['scat']}.keras")
+    model.save(f"model/{name['model']}/{name['model']}.keras")
     df = pd.DataFrame.from_dict(hist.history)
-    df.to_csv(f"model/{name['model']}/{name['model']} {name['scat']} loss.csv", encoding='utf-8', index=False)
+    df.to_csv(f"model/{name['model']}/{name['model']} loss.csv", encoding='utf-8', index=False)
     print(f"Training completed for {name['model']}")
 
 def train_saes(models, X_train, y_train, name, config):
@@ -94,11 +94,11 @@ def main(argv):
         "--model",
         default="lstm",
         help="Model to train.")
-    parser.add_argument(
-        "--scat",
-        default=970,
-        help="include scat number"
-    )
+    # parser.add_argument(
+    #     "--scat",
+    #     default=970,
+    #     help="include scat number"
+    # )
     args = parser.parse_args()
 
     print(f"Starting training process for {args.model} model...")
@@ -106,14 +106,14 @@ def main(argv):
     lag = 12
     config = {"batch": 256, "epochs": 2}
     file1 = 'Scats2006.xls'
-    scat_no = int(args.scat)
+    
     info = {
         "model": args.model,
-        "scat": scat_no,
+  
     }
     print("Loading and processing data...")
     try:
-        X_train, y_train, _, _, _ = process_data(file1, scat_no, lag)
+        X_train, y_train, _, _, _ = process_data(file1, lag)
         print("Data loaded successfully")
         print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
     except Exception as e:

@@ -30,11 +30,6 @@ def read_generalised_data(file):
     df1 = df1[ ["SCATS Number","Date", "Location"] + array]
    
     df1["Date"] = pd.to_datetime(df1['Date'])
-
- 
-    
-
-    
     
     training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
     testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01')]
@@ -46,8 +41,8 @@ def read_generalised_data(file):
     return training_set, testing_set
 
 
-def process_data(file, scat_no, lags):
-    df1, df2 = read_data(file,scat_no)
+def process_data(file, lags):
+    df1, df2 = read_generalised_data(file)
     
     
     scaler = MinMaxScaler(feature_range=(0,1))
@@ -76,4 +71,4 @@ def process_data(file, scat_no, lags):
 
 if __name__ == "__main__":
 
-    print(process_data("Scats2006.xls",970,12))
+    print(process_data("Scats2006.xls",12))
