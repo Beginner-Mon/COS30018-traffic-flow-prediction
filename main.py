@@ -95,16 +95,16 @@ def main():
         'mape': 'mape'  # metrics can be passed as strings
     }
 
-    lstm = load_model('model/lstm.keras', custom_objects=custom_objects)
-    gru = load_model('model/gru.keras', custom_objects=custom_objects)
-    saes = load_model('model/saes.keras', custom_objects=custom_objects)
+    lstm = load_model(f'model/lstm/lstm 970.keras', custom_objects=custom_objects)
+    gru = load_model(f'model/gru/gru 970.keras', custom_objects=custom_objects)
+    saes = load_model(f'model/saes/saes 970.keras', custom_objects=custom_objects)
     models = [lstm, gru, saes]
     names = ['LSTM', 'GRU', 'SAEs']
 
     lag = 12
-    file1 = 'Scats2006.xls'
-    file2 = 'Scats2006.xls'
-    _, _, X_test, y_test, scaler = process_data(file1, file2, lag)
+    file = 'Scats2006.xls'
+    scat_no = 970
+    _, _, X_test, y_test, scaler = process_data(file, scat_no, lag)
     y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).reshape(1, -1)[0]
 
     y_preds = []
