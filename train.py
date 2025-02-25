@@ -56,7 +56,7 @@ def train_saes(models, X_train, y_train, name, config):
         config: Dict, parameter for train.
     """
     print("Starting SAE training...")
-    temp = X_train
+    temp = np.copy(X_train)
 
     for i in range(len(models) - 1):
         print(f"Training SAE layer {i+1}")
@@ -71,7 +71,7 @@ def train_saes(models, X_train, y_train, name, config):
         m.compile(loss=MeanSquaredError(), optimizer="rmsprop", metrics=['mape'])
 
         print(f"Training autoencoder {i+1}")
-        m.fit(temp, y_train,
+        m.fit(temp, temp,
               batch_size=config["batch"],
               epochs=config["epochs"],
               validation_split=0.05,
@@ -84,6 +84,14 @@ def train_saes(models, X_train, y_train, name, config):
     for i in range(len(models) - 1):
         weights = models[i].get_layer('hidden').get_weights()
         saes.get_layer(f'hidden{i + 1}').set_weights(weights)
+
+    print("Fine-tuning the final SAES model...")
+    saes.compile(loss=MeanSquaredError(), optimizer="adam", metrics=['mape'])
+    saes.fit(X_train, y_train,
+                batch_size=config["batch"],
+                epochs=config["epochs"],
+                validation_split=0.05,
+                verbose=1)
 
     print("Training final SAES model...")
     train_model(saes, X_train, y_train, name, config)
