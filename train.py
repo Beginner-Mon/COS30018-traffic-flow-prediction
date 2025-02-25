@@ -24,10 +24,10 @@ def train_model(model, X_train, y_train, name, config):
         name: String, name of model.
         config: Dict, parameter for train.
     """
-    print(f"Compiling {name} model...")
+    print(f"Compiling {name['model']} model...")
     model.compile(loss=MeanSquaredError(), optimizer="rmsprop", metrics=['mape'])
 
-    print(f"Starting training for {name}...")
+    print(f"Starting training for {name['model']}...")
     print(f"Input shape: {X_train.shape}")
     print(f"Output shape: {y_train.shape}")
 
@@ -38,11 +38,11 @@ def train_model(model, X_train, y_train, name, config):
         validation_split=0.05,
         verbose=1)  # Added verbose=1 to see training progress
 
-    print(f"Saving {name} model...")
-    model.save('model/' + name + '.keras')
+    print(f"Saving {name['model']} model...")
+    model.save(f"model/{name['model']}/{name['model']}.keras")
     df = pd.DataFrame.from_dict(hist.history)
-    df.to_csv('model/' + name + ' loss.csv', encoding='utf-8', index=False)
-    print(f"Training completed for {name}")
+    df.to_csv(f"model/{name['model']}/{name['model']} loss.csv", encoding='utf-8', index=False)
+    print(f"Training completed for {name['model']}")
 
 def train_saes(models, X_train, y_train, name, config):
     """train
@@ -56,7 +56,7 @@ def train_saes(models, X_train, y_train, name, config):
         config: Dict, parameter for train.
     """
     print("Starting SAE training...")
-    temp = X_train
+    temp = np.copy(X_train)
 
     for i in range(len(models) - 1):
         print(f"Training SAE layer {i+1}")
@@ -71,7 +71,7 @@ def train_saes(models, X_train, y_train, name, config):
         m.compile(loss=MeanSquaredError(), optimizer="rmsprop", metrics=['mape'])
 
         print(f"Training autoencoder {i+1}")
-        m.fit(temp, y_train,
+        m.fit(temp, temp,
               batch_size=config["batch"],
               epochs=config["epochs"],
               validation_split=0.05,
@@ -85,6 +85,14 @@ def train_saes(models, X_train, y_train, name, config):
         weights = models[i].get_layer('hidden').get_weights()
         saes.get_layer(f'hidden{i + 1}').set_weights(weights)
 
+    print("Fine-tuning the final SAES model...")
+    saes.compile(loss=MeanSquaredError(), optimizer="adam", metrics=['mape'])
+    saes.fit(X_train, y_train,
+                batch_size=config["batch"],
+                epochs=config["epochs"],
+                validation_split=0.05,
+                verbose=1)
+
     print("Training final SAES model...")
     train_model(saes, X_train, y_train, name, config)
 
@@ -94,6 +102,11 @@ def main(argv):
         "--model",
         default="lstm",
         help="Model to train.")
+    # parser.add_argument(
+    #     "--scat",
+    #     default=970,
+    #     help="include scat number"
+    # )
     args = parser.parse_args()
 
     print(f"Starting training process for {args.model} model...")
@@ -101,11 +114,14 @@ def main(argv):
     lag = 12
     config = {"batch": 256, "epochs": 2}
     file1 = 'Scats2006.xls'
-    file2 = 'Scats2006.xls'
-
+    
+    info = {
+        "model": args.model,
+  
+    }
     print("Loading and processing data...")
     try:
-        X_train, y_train, _, _, _ = process_data(file1, file2, lag)
+        X_train, y_train, _, _, _ = process_data(file1, lag)
         print("Data loaded successfully")
         print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
     except Exception as e:
@@ -116,19 +132,19 @@ def main(argv):
         print("Preparing LSTM model...")
         X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
         m = model.get_lstm([12, 64, 64, 1])
-        train_model(m, X_train, y_train, args.model, config)
+        train_model(m, X_train, y_train, info, config)
     elif args.model == 'gru':
         print("Preparing GRU model...")
         X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
         m = model.get_gru([12, 64, 64, 1])
-        train_model(m, X_train, y_train, args.model, config)
+        train_model(m, X_train, y_train, info, config)
     elif args.model == 'saes':
         print("Preparing SAES model...")
         X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1]))
         m = model.get_saes([12, 400, 400, 400, 1])
-        train_saes(m, X_train, y_train, args.model, config)
+        train_saes(m, X_train, y_train, info, config)
     else:
-        print(f"Unknown model type: {args.model}")
+        print(f"Unknown model type: {info.model}")
 
 if __name__ == '__main__':
     main(sys.argv)
