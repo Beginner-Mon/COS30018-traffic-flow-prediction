@@ -39,9 +39,9 @@ def train_model(model, X_train, y_train, name, config):
         verbose=1)  # Added verbose=1 to see training progress
 
     print(f"Saving {name['model']} model...")
-    model.save(f"model/{name['model']}/{name['model']}.keras")
+    model.save(f"model/{name['model']}.keras")
     df = pd.DataFrame.from_dict(hist.history)
-    df.to_csv(f"model/{name['model']}/{name['model']} loss.csv", encoding='utf-8', index=False)
+    df.to_csv(f"model/{name['model']} loss.csv", encoding='utf-8', index=False)
     print(f"Training completed for {name['model']}")
 
 def train_saes(models, X_train, y_train, name, config):
