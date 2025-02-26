@@ -1,0 +1,15 @@
+.App {
+
+  position: relative;
+}
+
+.route-component {
+
+  position: absolute;
+  height: 100%;
+  top: 0;
+  right: 0;
+  z-index: 10000;
+  background-color: white;
+  padding: 20px;
+}
