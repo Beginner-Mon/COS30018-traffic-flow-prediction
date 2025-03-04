@@ -6,17 +6,13 @@ def read_data(file,scat_no):
     df1 = pd.read_excel(file, sheet_name="Data", header=0, skiprows=1)
     array = [f'V{i:02}' for i in range(96)]
 
-    df1 = df1[df1["SCATS Number"] == scat_no][ ["SCATS Number","Date", "Location"] + array]
+    df1 = df1[ ["SCATS Number","Date", "Location"] + array]
    
     df1["Date"] = pd.to_datetime(df1['Date'])
 
- 
-    
-
-    
     
     training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
-    testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01')]
+    testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01') & (df1['SCATS Number'] == scat_no)]
    
     # df1 = np.concatenate(df1[array].values)
     training_set = np.concatenate(training_set[array].values)
@@ -32,6 +28,7 @@ def read_generalised_data(file):
     df1["Date"] = pd.to_datetime(df1['Date'])
     
     training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
+
     testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01')]
    
     # df1 = np.concatenate(df1[array].values)
@@ -41,10 +38,10 @@ def read_generalised_data(file):
     return training_set, testing_set
 
 
-def process_data(file, lags):
-    df1, df2 = read_generalised_data(file)
+def process_data(file, lags,scat_no = 970):
+    df1, df2 = read_data(file, scat_no)
     
-    
+
     scaler = MinMaxScaler(feature_range=(0,1))
     flow1 = scaler.fit_transform(df1.reshape(-1,1))
     flow2 = scaler.fit_transform(df2.reshape(-1,1))

@@ -1,13 +1,25 @@
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS
 
-
-
-@app.route('/api/data', methods=['POST'])
-def post_data():
+@app.route('/submit', methods=['POST'])
+def submit_data():
     data = request.json  # Get JSON data from the request
-    return jsonify({'received': data}), 201  # Return the received data
+    lat = data.get('lat')
+    long = data.get('long')
+   
+    
+    # Here you can process the data (e.g., save to a database)
+    
+    return jsonify({
+        'message': 'Data received successfully',
+        'data': {
+            'lat': lat,
+            'long': long
+        }
+    })
 
 if __name__ == '__main__':
-    app.run(debug=True)  # Run the app in debug mode
+    app.run(debug=True)

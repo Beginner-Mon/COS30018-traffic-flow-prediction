@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import RouteComponent from './Route';
-
+import axios from 'axios'
 // Fix the default marker icon issue
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -27,7 +27,25 @@ const MapComponent = () => {
     // Define latitude and longitude ranges for Melbourne
     const latRange = [-37.840, -37.780]; // Approximate latitude range for Melbourne
     const lngRange = [144.910, 145.020]; // Approximate longitude range for Melbourne
+    const [response, setResponse] = useState(null)
 
+    const fetchData = async (event) => {
+        event.preventDefault();
+
+        const data = {
+            "lat": position[0],
+            "long": position[1]
+        }
+
+        try {
+            const res = await axios.post('http://127.0.0.1:5000/submit', data);
+            setResponse(res.data)
+            console.log(res.data)
+
+        } catch (error) {
+            console.log(error)
+        }
+    }
     useEffect(() => {
         // Generate random positions
         const positions = Array.from({ length: 10 }, () => getRandomPosition(latRange, lngRange));
@@ -53,7 +71,7 @@ const MapComponent = () => {
                 {/* Draw a polyline connecting the random positions */}
                 <Polyline positions={polylinePositions} pathOptions={{ color: 'blue', weight: 3 }} />
             </MapContainer>
-            <RouteComponent />
+            <RouteComponent fetchData={fetchData} reponse={response} />
 
         </>
     );

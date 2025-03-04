@@ -104,7 +104,7 @@ def main():
     lag = 12
     file = 'Scats2006.xls'
     scat_no = 970
-    _, _, X_test, y_test, scaler = process_data(file, lag)
+    _, _, X_test, y_test, scaler = process_data(file, lag, scat_no)
     y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).reshape(1, -1)[0]
 
     y_preds = []
