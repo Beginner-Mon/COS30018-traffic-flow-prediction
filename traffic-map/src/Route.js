@@ -1,5 +1,6 @@
 import React from "react";
-const RouteComponent = ({ fetchData, reponse }) => {
+const RouteComponent = ({ fetchData, response }) => {
+
     return (
         <div className="route-component">
             <h1>Route Component</h1>
@@ -21,10 +22,10 @@ const RouteComponent = ({ fetchData, reponse }) => {
             <button onClick={fetchData}>get location</button>
             <div>
                 {
-                    reponse && (
+                    response && (
                         <>
-                            <p>latitude: {reponse.lat}</p>
-                            <p>longitude: {reponse.long}</p>
+                            <p>latitude: {response.data.lat}</p>
+                            <p>longitude: {response.data.long}</p>
                         </>
                     )
 

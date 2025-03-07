@@ -53,6 +53,7 @@ const MapComponent = () => {
         setPolylinePositions(positions); // Set the same positions for the polyline
     }, []);
 
+
     return (
         <>
             <MapContainer center={position} zoom={13} style={{ height: "100vh", width: "100%" }}>
@@ -68,10 +69,11 @@ const MapComponent = () => {
                     </Marker>
                 ))}
                 <Circle center={position} radius={200} pathOptions={{ color: 'blue', fillOpacity: 0.5 }} />
-                {/* Draw a polyline connecting the random positions */}
+
                 <Polyline positions={polylinePositions} pathOptions={{ color: 'blue', weight: 3 }} />
             </MapContainer>
-            <RouteComponent fetchData={fetchData} reponse={response} />
+
+            <RouteComponent fetchData={fetchData} response={response} />
 
         </>
     );

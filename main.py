@@ -2,6 +2,7 @@
 Traffic Flow Prediction with Neural Networks(SAEs、LSTM、GRU).
 """
 import math
+import argparse
 import warnings
 import numpy as np
 import pandas as pd
@@ -89,7 +90,15 @@ def plot_results(y_true, y_preds, names):
     plt.show()
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scat",
+        default = "970",
+        help = "include scat number to predict"
+    )
+    args = parser.parse_args()
     # Custom objects needed for loading the models
+
     custom_objects = {
         'MeanSquaredError': MeanSquaredError,
         'mape': 'mape'  # metrics can be passed as strings
@@ -103,7 +112,7 @@ def main():
 
     lag = 12
     file = 'Scats2006.xls'
-    scat_no = 970
+    scat_no = int(args.scat)
     _, _, X_test, y_test, scaler = process_data(file, lag, scat_no)
     y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).reshape(1, -1)[0]
 
