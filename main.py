@@ -99,7 +99,7 @@ def main():
     gru = load_model(f'model/gru.keras', custom_objects=custom_objects)
     saes = load_model(f'model/saes.keras', custom_objects=custom_objects)
     bilstm = load_model(f'model/bilstm.keras', custom_objects=custom_objects)
-    models = [lstm, gru, saes]
+    models = [lstm, gru, saes,bilstm]
     names = ['LSTM', 'GRU', 'SAEs', 'BiLSTM']
 
     lag = 12
