@@ -24,7 +24,7 @@ def train_model(model, X_train, y_train, name, config):
         name: String, name of model.
         config: Dict, parameter for train.
     """
-    print(f"Compiling {name['model']} model...")
+    print(f"Compiling {name['model']} model...") 
     model.compile(loss=MeanSquaredError(), optimizer="rmsprop", metrics=['mape'])
 
     print(f"Starting training for {name['model']}...")
@@ -112,7 +112,7 @@ def main(argv):
     print(f"Starting training process for {args.model} model...")
 
     lag = 12
-    config = {"batch": 256, "epochs": 470}
+    config = {"batch": 256, "epochs": 2}
     file1 = 'Scats2006.xls'
     
     info = {
@@ -143,6 +143,11 @@ def main(argv):
         X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1]))
         m = model.get_saes([12, 400, 400, 400, 1])
         train_saes(m, X_train, y_train, info, config)
+    elif args.model == 'bilstm':
+        print("Preparing BILSTM model...")
+        X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+        m = model.get_bilstm([12, 64, 64, 1])
+        train_model(m, X_train, y_train, info, config)
     else:
         print(f"Unknown model type: {info.model}")
 
