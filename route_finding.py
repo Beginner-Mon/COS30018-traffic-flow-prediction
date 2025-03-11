@@ -49,7 +49,7 @@ saes_model = load_model('model/saes_multi_multi_site.keras')
 
 # Load historical data without headers
 historical_data = pd.read_csv('TrainingDataAdaptedOutput.csv', header=None)
-historical_data.columns = ['timestamp', 'flow', 'C', 'D', 'scat_id']
+historical_data.columns = ['timestamp', 'flow', 'day', 'day_num', 'scat_id']
 
 # Convert 'timestamp' to datetime
 historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], format='%d/%m/%Y %H:%M')

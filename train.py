@@ -133,13 +133,13 @@ def process_multi_site_data(file_path, lag):
     try:
         data = pd.read_csv(file_path)
         # Rename columns for easier handling
-        data.columns = ["timestamp", "flow", "lane_points", "observed_pct", "scat_id"]
+        data.columns = ["timestamp", "flow", "day", "day_num", "scat_id"]
     except Exception as e:
         print(f"Error reading file: {str(e)}")
         # Try CSV format as fallback
         try:
             data = pd.read_csv(file_path)
-            data.columns = ["timestamp", "flow", "lane_points", "observed_pct", "scat_id"]
+            data.columns = ["timestamp", "flow", "day", "day_num", "scat_id"]
         except:
             raise Exception(f"Could not load data from {file_path}")
 
