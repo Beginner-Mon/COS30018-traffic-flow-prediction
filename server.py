@@ -12,7 +12,28 @@ def submit_data():
    
     
     # Here you can process the data (e.g., save to a database)
+    import logging
+
+logging.basicConfig(level=logging.INFO)
+
+@app.route('/submit', methods=['POST'])
+def submit_data():
+    logging.info('Received POST request at /submit endpoint')
+    data = request.json  # Get JSON data from the request
+    lat = data.get('lat')
+    long = data.get('long')
+    logging.info('Received data: lat=%s, long=%s', lat, long)
     
+    # Here you can process the data (e.g., save to a database)
+    
+    logging.info('Data processed successfully')
+    return jsonify({
+        'message': 'Data received successfully',
+        'data': {
+            'lat': lat,
+            'long': long
+        }
+    })
     return jsonify({
         'message': 'Data received successfully',
         'data': {

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-def read_data(file,scat_no):
+def process_scats_data(file,lags,scat_no):
     '''this program separates the xls file into training set and testing set'''
     df1 = pd.read_excel(file, sheet_name="Data", header=0, skiprows=1)
     array = [f'V{i:02}' for i in range(96)]
@@ -11,15 +11,16 @@ def read_data(file,scat_no):
     df1["Date"] = pd.to_datetime(df1['Date'])
 
     
-    training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
+    training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26') & (df1['SCATS Number'] == scat_no)]
     testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01') & (df1['SCATS Number'] == scat_no)]
    
     # df1 = np.concatenate(df1[array].values)
     training_set = np.concatenate(training_set[array].values)
     testing_set = np.concatenate(testing_set[array].values)
 
-    return training_set, testing_set
-def read_generalised_data(file):
+    return read_data(training_set,testing_set,lags)
+
+def process_data(file,lags,scat_no):
     df1 = pd.read_excel(file, sheet_name="Data", header=0, skiprows=1)
     array = [f'V{i:02}' for i in range(96)]
 
@@ -29,17 +30,17 @@ def read_generalised_data(file):
     
     training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
 
-    testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01')]
+    testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01') & (df1['SCATS Number'] == scat_no)]
    
     # df1 = np.concatenate(df1[array].values)
     training_set = np.concatenate(training_set[array].values)
     testing_set = np.concatenate(testing_set[array].values)
 
-    return training_set, testing_set
+    return read_data(training_set,testing_set, lags)
 
 
-def process_data(file, lags,scat_no = 970):
-    df1, df2 = read_data(file, scat_no)
+def read_data(df1, df2, lags):
+    
     
 
     scaler = MinMaxScaler(feature_range=(0,1))
