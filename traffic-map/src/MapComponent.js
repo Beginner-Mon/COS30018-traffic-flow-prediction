@@ -1,16 +1,16 @@
 // src/MapComponent.js
-import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import React, { useEffect, useState, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import axios from 'axios'; // Import axios
+import axios from 'axios';
 import RouteComponent from './Route';
 
 // Fix leaflet marker icons
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
-  iconUrl: require('leaflet/dist/images/marker-icon.png'),
-  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+    iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+    iconUrl: require('leaflet/dist/images/marker-icon.png'),
+    shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
 });
 
 // Mock SCAT data (replace with your actual data)
@@ -22,79 +22,79 @@ const scatData = {
 };
 
 const RoutingMachine = ({ waypoints }) => {
-  const map = useMap();
-  const routingRef = useRef();
-  const isMounted = useRef(true);
+    const map = useMap();
+    const routingRef = useRef();
+    const isMounted = useRef(true);
 
-  useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
+    useEffect(() => {
+        return () => {
+            isMounted.current = false;
+        };
+    }, []);
 
-  useEffect(() => {
-    if (!map || waypoints.length < 2) return;
+    useEffect(() => {
+        if (!map || waypoints.length < 2) return;
 
-    const router = L.Routing.osrmv1({
-      serviceUrl: 'https://router.project-osrm.org/route/v1'
-    });
-
-    const cleanupPrevious = () => {
-      if (routingRef.current) {
-        try {
-          map.removeControl(routingRef.current);
-          routingRef.current.getPlan().setWaypoints([]);
-        } catch (error) {
-          console.warn('Cleanup error:', error);
-        }
-        routingRef.current = null;
-      }
-    };
-
-    cleanupPrevious();
-
-    // Split waypoints into chunks of 3 (OSRM demo limit)
-    const waypointChunks = [];
-    for (let i = 0; i < waypoints.length; i += 2) {
-      const chunk = waypoints.slice(i, i + 3);
-      if (chunk.length > 1) waypointChunks.push(chunk);
-    }
-
-    const routingControls = waypointChunks.map(chunk => {
-      const control = L.Routing.control({
-        router,
-        waypoints: chunk.map(pos => L.latLng(pos[0], pos[1])),
-        routeWhileDragging: false,
-        show: false,
-        addWaypoints: false,
-        createMarker: () => null,
-        lineOptions: {
-          styles: [{ color: '#FF0000', opacity: 0.7, weight: 5 }],
-          extendToWaypoints: true,
-          missingRouteTolerance: 1
-        }
-      });
-      control.addTo(map);
-      return control;
-    });
-
-    routingRef.current = routingControls;
-
-    return () => {
-      if (isMounted.current) {
-        routingControls.forEach(control => {
-          try {
-            map.removeControl(control);
-            control.getPlan().setWaypoints([]);
-          } catch (error) {
-            console.warn('Cleanup error:', error);
-          }
+        const router = L.Routing.osrmv1({
+            serviceUrl: 'https://router.project-osrm.org/route/v1'
         });
-      }
-    };
-  }, [map, waypoints]);
 
-  return null;
+        const cleanupPrevious = () => {
+            if (routingRef.current) {
+                try {
+                    map.removeControl(routingRef.current);
+                    routingRef.current.getPlan().setWaypoints([]);
+                } catch (error) {
+                    console.warn('Cleanup error:', error);
+                }
+                routingRef.current = null;
+            }
+        };
+
+        cleanupPrevious();
+
+        // Split waypoints into chunks of 3 (OSRM demo limit)
+        const waypointChunks = [];
+        for (let i = 0; i < waypoints.length; i += 2) {
+            const chunk = waypoints.slice(i, i + 3);
+            if (chunk.length > 1) waypointChunks.push(chunk);
+        }
+
+        const routingControls = waypointChunks.map(chunk => {
+            const control = L.Routing.control({
+                router,
+                waypoints: chunk.map(pos => L.latLng(pos[0], pos[1])),
+                routeWhileDragging: false,
+                show: false,
+                addWaypoints: false,
+                createMarker: () => null,
+                lineOptions: {
+                    styles: [{ color: '#FF0000', opacity: 0.7, weight: 5 }],
+                    extendToWaypoints: true,
+                    missingRouteTolerance: 1
+                }
+            });
+            control.addTo(map);
+            return control;
+        });
+
+        routingRef.current = routingControls;
+
+        return () => {
+            if (isMounted.current) {
+                routingControls.forEach(control => {
+                    try {
+                        map.removeControl(control);
+                        control.getPlan().setWaypoints([]);
+                    } catch (error) {
+                        console.warn('Cleanup error:', error);
+                    }
+                });
+            }
+        };
+    }, [map, waypoints]);
+
+    return null;
 };
 
 const MapComponent = () => {
