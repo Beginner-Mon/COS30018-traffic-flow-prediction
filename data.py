@@ -23,6 +23,7 @@ def read_data(file,scat_no):
     testing_set = np.concatenate(testing_set[array].values)
 
     return training_set, testing_set
+
 def read_generalised_data(file):
     df1 = pd.read_excel(file, sheet_name="Data", header=0, skiprows=1)
     array = [f'V{i:02}' for i in range(96)]
@@ -66,8 +67,6 @@ def process_data(file, lags):
 
     return X_train, y_train, X_test, y_test, scaler
 
-
-    
 
 if __name__ == "__main__":
 
