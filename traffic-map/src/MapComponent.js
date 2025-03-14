@@ -1,7 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+// src/MapComponent.js
+import React, { useEffect, useState } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import 'leaflet-routing-machine';
+import axios from 'axios'; // Import axios
+import RouteComponent from './Route';
 
 // Fix leaflet marker icons
 delete L.Icon.Default.prototype._getIconUrl;
@@ -11,10 +13,12 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
 });
 
-const getRandomPosition = (latRange, lngRange) => {
-  const lat = Math.random() * (latRange[1] - latRange[0]) + latRange[0];
-  const lng = Math.random() * (lngRange[1] - lngRange[0]) + lngRange[0];
-  return [lat, lng];
+// Mock SCAT data (replace with your actual data)
+const scatData = {
+    "970": [-37.86703, 145.09159],  // Example: Melbourne CBD
+    "2000": [-37.8516827, 145.0943457],    // Slightly north-east
+    "3685": [-37.85467, 145.09384],    // Slightly south-east
+    // Add more SCAT IDs and their lat/long from traffic_network2.csv
 };
 
 const RoutingMachine = ({ waypoints }) => {
@@ -94,64 +98,75 @@ const RoutingMachine = ({ waypoints }) => {
 };
 
 const MapComponent = () => {
-  const position = [-37.814, 144.96332];
-  const [randomPositions, setRandomPositions] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+    const position = [-37.814, 144.96332]; // Center of Melbourne
+    const [routes, setRoutes] = useState([]); // Store API routes
+    const [source, setSource] = useState("970"); // Default source
+    const [destination, setDestination] = useState("2000"); // Default destination
 
-  const latRange = [-37.840, -37.780];
-  const lngRange = [144.910, 145.020];
+    // Fetch routes from API using axios when source or destination changes
+    useEffect(() => {
+        const fetchRoutes = async () => {
+            try {
+                const response = await axios.post('http://localhost:5000/find_routes', {
+                    source: source,
+                    destination: destination,
+                }, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
 
-  useEffect(() => {
-    const generatePositions = () => {
-      try {
-        // Generate 6 points instead of 10 (better for demo server)
-        const positions = Array.from({ length: 6 }, () => 
-          getRandomPosition(latRange, lngRange)
-        );
-        setRandomPositions(positions);
-      } catch (error) {
-        console.error('Position generation failed:', error);
-      } finally {
-        setIsLoading(false);
-      }
+                if (response.data.error) {
+                    console.error(response.data.error);
+                    setRoutes([]);
+                } else {
+                    console.log(response)
+                    setRoutes(response.data.routes); // Store the routes
+                }
+            } catch (error) {
+                console.error('Error fetching routes:', error);
+                setRoutes([]);
+            }
+        };
+
+        fetchRoutes();
+    }, [source, destination]); // Re-fetch when source or destination changes
+
+    // Convert SCAT paths to lat/long positions for polylines
+    const getPolylinePositions = (path) => {
+        return path.map(scatId => scatData[scatId] || position); // Fallback to center if SCAT not found
     };
 
-    generatePositions();
-  }, []);
-
-  if (isLoading) return <div>Loading map...</div>;
-
-  return (
-    <MapContainer 
-      center={position} 
-      zoom={13} 
-      style={{ height: "100vh", width: "100%" }}
-    >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; OpenStreetMap contributors'
-      />
-      
-      {randomPositions.length >= 2 && (
-        <RoutingMachine waypoints={randomPositions} />
-      )}
-
-      {randomPositions.map((pos, index) => (
-        <Marker key={index} position={pos}>
-          <Popup>
-            Point {index + 1}<br />
-            {pos[0].toFixed(5)}, {pos[1].toFixed(5)}
-          </Popup>
-        </Marker>
-      ))}
-
-      <Circle 
-        center={position} 
-        radius={200} 
-        pathOptions={{ color: 'blue', fillOpacity: 0.2 }}
-      />
-    </MapContainer>
-  );
+    return (
+        <>
+            <MapContainer center={position} zoom={13} style={{ height: "100vh", width: "100%" }}>
+                <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                />
+                {/* Markers for all unique SCAT points in routes */}
+                {routes.length > 0 && [...new Set(routes.flatMap(route => route.path))].map((scatId, index) => (
+                    scatData[scatId] && (
+                        <Marker key={index} position={scatData[scatId]}>
+                            <Popup>
+                                SCAT {scatId}: {scatData[scatId][0].toFixed(5)}, {scatData[scatId][1].toFixed(5)}
+                            </Popup>
+                        </Marker>
+                    )
+                ))}
+                {/* Polylines for each route */}
+                {routes.map((route, index) => (
+                    <Polyline
+                        key={index}
+                        positions={getPolylinePositions(route.path)}
+                        pathOptions={{ color: index === 0 ? 'red' : 'blue', weight: 3 }} // Highlight first route
+                    />
+                ))}
+            </MapContainer>
+            {/* Pass setSource and setDestination to RouteComponent */}
+            <RouteComponent setSource={setSource} setDestination={setDestination} />
+        </>
+    );
 };
 
 export default MapComponent;
