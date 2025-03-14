@@ -1,10 +1,10 @@
 # api.py
 from flask import Flask, request, jsonify
-from route_finding import find_top_routes
+from route_finding import find_top_routes, get_all_scats_data
 from flask_cors import CORS
 # Khởi tạo Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/find_routes": {"origins": "http://localhost:3000"}})  # Restrict to React origin
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})  # Restrict to React origin
 # API endpoint
 @app.route('/find_routes', methods=['POST'])
 def find_routes():
@@ -24,6 +24,14 @@ def find_routes():
     if error:
         return jsonify({'error': error}), 404
     return jsonify({'routes': routes}), 200
+
+
+@app.route('/get_scats_number', methods =['GET'])
+def get_scats_number():
+    scats = get_all_scats_data()
+    return jsonify({
+        'scats': scats
+    }), 200
 
 # Chạy server
 if __name__ == '__main__':

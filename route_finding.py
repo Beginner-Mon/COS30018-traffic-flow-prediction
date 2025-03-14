@@ -38,7 +38,11 @@ scat_ids = historical_data['scat_id'].unique()
 scat_mapping = {scat: idx for idx, scat in enumerate(scat_ids)}
 X_min = 0
 X_max = 1000
-
+def get_all_scats_data():
+    '''
+    Returns a list of all SCAT data in network2.csv
+    '''
+    return scat_data[['SCATS Number', 'Latitude', 'Longitude', 'Site Description', 'Site Type', 'Neighbours']].to_dict('records')
 # Functions
 def calculate_travel_time(predicted_flow_A, distance):
     base_time = distance / SPEED_LIMIT
