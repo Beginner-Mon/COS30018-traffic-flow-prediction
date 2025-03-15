@@ -96,9 +96,9 @@ const MapComponent = () => {
         <>
             <MapContainer center={position} zoom={13} style={{ height: "100vh", width: "100%" }}>
                 <TileLayer
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                />
+    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
+  attribution='Tiles © <a href="https://www.esri.com/">Esri</a> & contributors'
+  />
                 {/* Markers for ALL SCAT points */}
                 {Object.entries(scatData).map(([scatId, scat]) => (
                     <Marker
