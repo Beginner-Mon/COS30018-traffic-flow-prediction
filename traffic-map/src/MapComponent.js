@@ -1,6 +1,6 @@
 // src/MapComponent.js
 import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
 import axios from 'axios';
 import RouteComponent from './Route';
@@ -11,6 +11,18 @@ L.Icon.Default.mergeOptions({
     iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
     iconUrl: require('leaflet/dist/images/marker-icon.png'),
     shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
+
+// Custom red icon for destination
+const destinationIcon = new L.Icon({
+    iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+    iconUrl: require('leaflet/dist/images/marker-icon.png'),
+    shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41],
+    className: 'destination-marker' // For CSS tinting
 });
 
 const MapComponent = () => {
@@ -96,29 +108,65 @@ const MapComponent = () => {
         <>
             <MapContainer center={position} zoom={13} style={{ height: "100vh", width: "100%" }}>
                 <TileLayer
-    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
-  attribution='Tiles © <a href="https://www.esri.com/">Esri</a> & contributors'
-  />
-                {/* Markers for ALL SCAT points */}
+                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
+                    attribution='Tiles © <a href="https://www.esri.com/">Esri</a> & contributors'
+                />
+                {/* Render SCAT points: Larger red CircleMarker for source, red Marker for destination, small CircleMarkers for others */}
                 {Object.entries(scatData).map(([scatId, scat]) => (
-                    <Marker
-                        key={scatId}
-                        position={[scat.lat, scat.lng]}
-                    >
-                        <Popup>
-                            SCAT {scatId}<br />
-                            Lat: {scat.lat.toFixed(5)}, Lng: {scat.lng.toFixed(5)}<br />
-                            Description: {scat.description}<br />
-                            Type: {scat.type}<br />
-                            Neighbours: {scat.neighbours}
-                        </Popup>
-                    </Marker>
+                    scatId === source ? (
+                        <CircleMarker
+                            key={scatId}
+                            center={[scat.lat, scat.lng]}
+                            radius={8} 
+                            pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 1 }}
+                            zIndexOffset={1000} 
+                        >
+                            <Popup>
+                                <span>SCAT {scatId}</span><br />
+                                Lat: {scat.lat.toFixed(5)}, Lng: {scat.lng.toFixed(5)}<br />
+                                Description: {scat.description}<br />
+                                Type: {scat.type}<br />
+                                Neighbours: {scat.neighbours}
+                            </Popup>
+                        </CircleMarker>
+                    ) : scatId === destination ? (
+                        <Marker
+                            key={scatId}
+                            position={[scat.lat, scat.lng]}
+                            icon={destinationIcon}
+                            zIndexOffset={1000} 
+                        >
+                            <Popup>
+                                <span >SCAT {scatId}</span><br />
+                                Lat: {scat.lat.toFixed(5)}, Lng: {scat.lng.toFixed(5)}<br />
+                                Description: {scat.description}<br />
+                                Type: {scat.type}<br />
+                                Neighbours: {scat.neighbours}
+                            </Popup>
+                        </Marker>
+                    ) : (
+                        <CircleMarker
+                            key={scatId}
+                            center={[scat.lat, scat.lng]}
+                            radius={4} // Smaller size for others
+                            pathOptions={{ color: '#1E90FF', fillColor: 'white', fillOpacity: 1 }}
+                        >
+                            <Popup>
+                                <span >SCAT {scatId}</span><br />
+                                Lat: {scat.lat.toFixed(5)}, Lng: {scat.lng.toFixed(5)}<br />
+                                Description: {scat.description}<br />
+                                Type: {scat.type}<br />
+                                Neighbours: {scat.neighbours}
+                            </Popup>
+                        </CircleMarker>
+                    )
                 ))}
                 {/* Polyline for the selected route only */}
                 {selectedRoute && (
                     <Polyline
                         positions={getPolylinePositions(selectedRoute.path)}
-                        pathOptions={{ color: 'red', weight: 3 }}
+                        pathOptions={{ color: 'blue', weight: 4 }}
+                        zIndexOffset={0} 
                     />
                 )}
             </MapContainer>
