@@ -13,3 +13,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Tint the destination marker red */
+.destination-marker {
+  filter: hue-rotate(0deg) saturate(2); /* Red hue with boosted saturation */
+}
