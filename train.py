@@ -421,28 +421,28 @@ def main(argv):
             print(f"Error loading data: {str(e)}")
             return
 
-    if args.model == 'lstm':
-        print("Preparing LSTM model...")
-        X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-        m = model.get_lstm([12, 64, 64, 1])
-        train_model(m, X_train, y_train, info, config)
-    elif args.model == 'gru':
-        print("Preparing GRU model...")
-        X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-        m = model.get_gru([12, 64, 64, 1])
-        train_model(m, X_train, y_train, info, config)
-    elif args.model == 'saes':
-        print("Preparing SAES model...")
-        X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1]))
-        m = model.get_saes([12, 400, 400, 400, 1])
-        train_saes(m, X_train, y_train, info, config)
-    elif args.model == 'bilstm':
-        print("Preparing BILSTM model...")
-        X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-        m = model.get_bilstm([12, 64, 64, 1])
-        train_model(m, X_train, y_train, info, config)
-    else:
-        print(f"Unknown model type: {info.model}")
+        if args.model == 'lstm':
+            print("Preparing LSTM model...")
+            X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+            m = model.get_lstm([12, 64, 64, 1])
+            train_model(m, X_train, y_train, info, config)
+        elif args.model == 'gru':
+            print("Preparing GRU model...")
+            X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+            m = model.get_gru([12, 64, 64, 1])
+            train_model(m, X_train, y_train, info, config)
+        elif args.model == 'saes':
+            print("Preparing SAES model...")
+            X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1]))
+            m = model.get_saes([12, 400, 400, 400, 1])
+            train_saes(m, X_train, y_train, info, config)
+        elif args.model == 'bilstm':
+            print("Preparing BILSTM model...")
+            X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+            m = model.get_bilstm([12, 64, 64, 1])
+            train_model(m, X_train, y_train, info, config)
+        else:
+            print(f"Unknown model type: {info.model}")
 
 if __name__ == '__main__':
     main(sys.argv)
