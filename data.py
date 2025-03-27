@@ -9,11 +9,6 @@ def read_data(file,scat_no):
     df1 = df1[df1["SCATS Number"] == scat_no][ ["SCATS Number","Date", "Location"] + array]
    
     df1["Date"] = pd.to_datetime(df1['Date'])
-
- 
-    
-
-    
     
     training_set = df1[(df1['Date'] >= '2006-10-01') & (df1['Date'] < '2006-10-26')]
     testing_set = df1[(df1['Date'] >= '2006-10-26') & (df1['Date'] <'2006-11-01')]

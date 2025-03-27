@@ -31,7 +31,7 @@ gru_model = load_model('model/gru_multi_multi_site.keras')
 saes_model = load_model('model/saes_multi_multi_site.keras')
 
 historical_data = pd.read_csv('TrainingDataAdaptedOutput.csv', header=None,skiprows=1)
-historical_data.columns = ['timestamp', 'flow', 'day', 'day_num', 'scat_id']
+historical_data.columns = ['timestamp', 'flow', 'day', 'day_num', 'scat_id', 'direction']
 historical_data['timestamp'] = pd.to_datetime(historical_data['timestamp'], format='%d/%m/%Y %H:%M')
 
 scat_ids = historical_data['scat_id'].unique()
