@@ -118,12 +118,15 @@ const MapComponent = () => {
         }
     };
 
-    const handleSetSource = (scatId) => {
-        setSource(scatId);
-    };
-
-    const handleSetDestination = (scatId) => {
-        setDestination(scatId);
+    const handleSelectionChange = (scatId, event) => {
+        const value = event.target.value;
+        if (value === 'source') {
+            setSource(scatId);
+        } else if (value === 'destination') {
+            setDestination(scatId);
+        }
+        // Reset the select to "Select action" after choosing
+        event.target.value = '';
     };
 
     return (
@@ -158,8 +161,11 @@ const MapComponent = () => {
                                 Description: {scat.description}<br />
                                 Type: {scat.type}<br />
                                 Neighbours: {scat.neighbours}<br />
-                                <button onClick={() => handleSetSource(scatId)}>Set as Source</button>
-                                <button onClick={() => handleSetDestination(scatId)}>Set as Destination</button>
+                                <select onChange={(e) => handleSelectionChange(scatId, e)} defaultValue="">
+                                    <option value="" disabled>Select action</option>
+                                    <option value="source">Set as Source</option>
+                                    <option value="destination">Set as Destination</option>
+                                </select>
                             </Popup>
                         </CircleMarker>
                     ) : scatId === destination ? (
@@ -178,8 +184,11 @@ const MapComponent = () => {
                                 Description: {scat.description}<br />
                                 Type: {scat.type}<br />
                                 Neighbours: {scat.neighbours}<br />
-                                <button onClick={() => handleSetSource(scatId)}>Set as Source</button>
-                                <button onClick={() => handleSetDestination(scatId)}>Set as Destination</button>
+                                <select onChange={(e) => handleSelectionChange(scatId, e)} defaultValue="">
+                                    <option value="" disabled>Select action</option>
+                                    <option value="source">Set as Source</option>
+                                    <option value="destination">Set as Destination</option>
+                                </select>
                             </Popup>
                         </Marker>
                     ) : (
@@ -198,8 +207,11 @@ const MapComponent = () => {
                                 Description: {scat.description}<br />
                                 Type: {scat.type}<br />
                                 Neighbours: {scat.neighbours}<br />
-                                <button onClick={() => handleSetSource(scatId)}>Set as Source</button>
-                                <button onClick={() => handleSetDestination(scatId)}>Set as Destination</button>
+                                <select onChange={(e) => handleSelectionChange(scatId, e)} defaultValue="">
+                                    <option value="" disabled>Select action</option>
+                                    <option value="source">Set as Source</option>
+                                    <option value="destination">Set as Destination</option>
+                                </select>
                             </Popup>
                         </CircleMarker>
                     )
