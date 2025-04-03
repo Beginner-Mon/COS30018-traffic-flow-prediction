@@ -21,6 +21,51 @@ random.seed(42)               # Seed for Python's random module
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(42)  # Seed for all GPUs
 # how weights are initialized, how data is shuffled, or how random operations happen—changes every time you run it
+def build_dynamic_adjacency_matrix(nodes, coordinates, flows, base_adj, flow_threshold=1000, max_distance=1.0): #use for route finding
+    """
+    Build a dynamic adjacency matrix based on predicted flows.
+    
+    Args:
+        nodes: List of node IDs (SCATS numbers).
+        coordinates: Dict of node coordinates {node: {'lat': lat, 'lon': lon}}.
+        flows: Predicted flows, shape (timesteps, nodes).
+        base_adj: Base static adjacency matrix, shape (num_nodes, num_nodes).
+        flow_threshold: Flow threshold to adjust connectivity (default: 1000).
+        max_distance: Maximum distance for adding new edges (default: 1.0 km).
+    
+    Returns:
+        Dynamic adjacency matrix, shape (timesteps, num_nodes, num_nodes).
+    """
+    num_nodes = len(nodes)
+    num_timesteps = flows.shape[0]
+    dynamic_adj = np.zeros((num_timesteps, num_nodes, num_nodes))
+
+    # Compute distances using Haversine formula
+    coords_array = np.array([[coordinates[node]['lat'], coordinates[node]['lon']] for node in nodes])
+    coords_rad = np.radians(coords_array)
+    distances = haversine_distances(coords_rad) * 6371  # Distances in km
+
+    for t in range(num_timesteps):
+        adj_t = base_adj.copy()
+        flow_t = flows[t]  # Flows at timestep t, shape (num_nodes,)
+
+        # Adjust connectivity based on flows
+        for i in range(num_nodes):
+            for j in range(i + 1, num_nodes):
+                if distances[i, j] < max_distance:
+                    # If flow at either node is high, reduce connectivity (simulate congestion)
+                    if flow_t[i] > flow_threshold or flow_t[j] > flow_threshold:
+                        adj_t[i, j] = adj_t[j, i] = 0  # Remove edge if congested
+                    else:
+                        # Add edge if within distance and not already connected
+                        if adj_t[i, j] == 0:
+                            adj_t[i, j] = adj_t[j, i] = 1
+
+        # Add self-loops
+        np.fill_diagonal(adj_t, 1)
+        dynamic_adj[t] = adj_t
+
+    return dynamic_adj
 
 def build_hybrid_adjacency_matrix(nodes, network_data=None, coordinates=None, threshold_distance=1.0, use_dynamic_threshold=True):
     num_nodes = len(nodes)
@@ -251,29 +296,31 @@ class STGNNLayer(nn.Module):
         
         return x, attention
 
-
-class RecurrentLayer(nn.Module):
-    """Recurrent layer with GRU for capturing sequential patterns"""
-    def __init__(self, hidden_dim, dropout=0):
-        super(RecurrentLayer, self).__init__()
-        self.gru = nn.GRU(
-            input_size=hidden_dim,
-            hidden_size=hidden_dim,
-            num_layers=2,  # Tăng số layers lên 2 để sử dụng dropout
-            batch_first=True,
-            dropout=dropout if dropout > 0 else 0
+class TransformerLayer(nn.Module):
+    """Transformer layer for capturing sequential patterns"""
+    def __init__(self, hidden_dim, num_heads=4, num_layers=2, dropout=0.1):
+        super(TransformerLayer, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.transformer = nn.Transformer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            num_encoder_layers=num_layers,
+            num_decoder_layers=0,  # Only using encoder part
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True
         )
 
     def forward(self, x):
         # x shape: [batch, channels, nodes, time]
         batch, channels, nodes, time = x.size()
 
-        # Reshape for GRU
+        # Reshape for Transformer: [batch, nodes, time, channels] -> [batch * nodes, time, channels]
         x = x.permute(0, 2, 3, 1)  # [batch, nodes, time, channels]
         x = x.reshape(batch * nodes, time, channels)
 
-        # Apply GRU
-        x, _ = self.gru(x)
+        # Apply Transformer (using encoder only)
+        x = self.transformer.encoder(x)  # [batch * nodes, time, channels]
 
         # Reshape back
         x = x.reshape(batch, nodes, time, channels)
@@ -282,96 +329,117 @@ class RecurrentLayer(nn.Module):
         return x
     
 class EnhancedSTGNN(nn.Module):
-    """Enhanced Spatial-Temporal Graph Neural Network with node and time embeddings"""
-    def __init__(self, input_dim=4, num_nodes=41, hidden_dim=64, output_dim=1, num_layers=3,
+    def __init__(self, input_dim=5, num_nodes=41, hidden_dim=64, output_dim=1, num_layers=3,
                  dropout=0.1, window_size=48, horizon=4, embedding_dim=16):
         super().__init__()
         self.window_size = window_size
         self.horizon = horizon
         self.hidden_dim = hidden_dim
-
-        # Node and time embeddings
         self.node_embedding = nn.Parameter(torch.randn(num_nodes, embedding_dim))
-
-        # Time feature processing
         self.hour_embedding = nn.Linear(1, embedding_dim)
         self.day_embedding = nn.Linear(1, embedding_dim)
         self.weekend_embedding = nn.Linear(1, embedding_dim)
-        self.num_directions = input_dim - 3  # input_dim = directions + 3 (hour, day, weekend)
-        
-        # Input embedding layer (CRITICAL DIMENSION)
-        total_features = self.num_directions + embedding_dim + 3 * embedding_dim
+        self.num_directions = input_dim - 4  # flow, imputed_flag, hour, weekend, day -> num_directions = 1
+        # Include imputed_flag (1 channel) in total features
+        total_features = self.num_directions + 1 + embedding_dim + 3 * embedding_dim  # 1 + 1 + 16 + 48 = 66
         self.input_embedding = nn.Conv2d(
             in_channels=total_features,
             out_channels=hidden_dim,
             kernel_size=1
         )
-        
         self.pos_encoding = PositionalEncoding(hidden_dim)
         self.stgnn_layers = nn.ModuleList([
             STGNNLayer(hidden_dim, dropout) for _ in range(num_layers)
         ])
-        self.recurrent_layer = RecurrentLayer(hidden_dim, dropout)
+        self.recurrent_layer = TransformerLayer(hidden_dim, num_heads=4, num_layers=2, dropout=dropout)
         self.pred_layer = nn.Linear(hidden_dim * window_size, horizon)
         
     def perturb_input(self, x, noise_level=0.1):
         noise = torch.randn_like(x) * noise_level
         return x + noise
         
-    def forward(self, x, static_adj=None, sampling_prob=1.0):
-        # x shape: [batch, time, nodes, features]
+    def forward(self, x, static_adj=None, sampling_prob=1.0, mc_dropout_samples=10):
+        """
+        Forward pass with Monte Carlo Dropout for uncertainty quantification.
+        
+        Args:
+            x: Input tensor [batch, time, nodes, features]
+            static_adj: Static adjacency matrix [nodes, nodes]
+            sampling_prob: Sampling probability for training perturbation
+            mc_dropout_samples: Number of MC Dropout samples for uncertainty estimation
+        
+        Returns:
+            mean_out: Mean prediction [batch, horizon, nodes]
+            std_out: Standard deviation of predictions [batch, horizon, nodes]
+        """
         if self.training and sampling_prob < 1.0:
             x = self.perturb_input(x, noise_level=1.0 - sampling_prob)
-        
+
         batch_size = x.size(0)
         num_nodes = x.size(2)
-        
-        # Tách các đặc trưng
-        flow = x[..., :self.num_directions]
-        hour = x[..., self.num_directions:self.num_directions+1]
-        weekend = x[..., self.num_directions+1:self.num_directions+2]
-        day = x[..., self.num_directions+2:self.num_directions+3]
 
-        # Tạo node embeddings cho mỗi node
-        node_emb = self.node_embedding.unsqueeze(0).unsqueeze(0)  # [1, 1, nodes, emb_dim]
-        node_emb = node_emb.expand(batch_size, self.window_size, -1, -1)  # [batch, time, nodes, emb_dim]
-        
-        # Tạo time embeddings
-        hour_emb = self.hour_embedding(hour)      # [batch, time, nodes, emb_dim]
-        day_emb = self.day_embedding(day)         # [batch, time, nodes, emb_dim]
-        weekend_emb = self.weekend_embedding(weekend)  # [batch, time, nodes, emb_dim]
-        
-        # Kết hợp tất cả features và embeddings
+        # Split features
+        flow = x[..., :self.num_directions]
+        imputed_flag = x[..., self.num_directions:self.num_directions+1]  # New feature
+        hour = x[..., self.num_directions+1:self.num_directions+2]
+        weekend = x[..., self.num_directions+2:self.num_directions+3]
+        day = x[..., self.num_directions+3:self.num_directions+4]
+
+        # Create node embeddings
+        node_emb = self.node_embedding.unsqueeze(0).unsqueeze(0)
+        node_emb = node_emb.expand(batch_size, self.window_size, -1, -1)
+
+        # Create time embeddings
+        hour_emb = self.hour_embedding(hour)
+        day_emb = self.day_embedding(day)
+        weekend_emb = self.weekend_embedding(weekend)
+
+        # Combine features and embeddings
         x = torch.cat([
-            flow,           # Giá trị flow gốc
-            node_emb,      # Node embeddings
-            hour_emb,      # Hour embeddings
-            day_emb,       # Day embeddings
-            weekend_emb    # Weekend embeddings
+            flow,
+            imputed_flag,  # Include new feature
+            node_emb,
+            hour_emb,
+            day_emb,
+            weekend_emb
         ], dim=-1)
-        
-        # Chuyển đổi thứ tự chiều cho Conv2d: [batch, time, nodes, features] -> [batch, features, nodes, time]
+
+        # Apply layers
         x = x.permute(0, 3, 2, 1)
-        
-        # Áp dụng các layer
         x = self.input_embedding(x)
         x = self.pos_encoding(x)
-        
+
         attention_matrices = []
         for layer in self.stgnn_layers:
             x, attention = layer(x, static_adj)
             attention_matrices.append(attention)
-            
-        x = self.recurrent_layer(x)
-        
-        # Reshape cho prediction layer
-        x = x.permute(0, 2, 1, 3)  # [batch, nodes, hidden_dim, time]
-        x = x.reshape(-1, self.hidden_dim * self.window_size)
-        out = self.pred_layer(x)  # [batch * nodes, horizon]
-        out = out.reshape(batch_size, num_nodes, self.horizon)
-        out = out.permute(0, 2, 1)  # [batch, horizon, nodes]
 
-        return out, attention_matrices
+        x = self.recurrent_layer(x)
+
+        # Reshape for prediction layer
+        x = x.permute(0, 2, 1, 3)
+        x = x.reshape(-1, self.hidden_dim * self.window_size)
+
+        # Monte Carlo Dropout: Run multiple forward passes
+        if not self.training and mc_dropout_samples > 1:
+            self.train(True)  # Enable dropout during inference
+            predictions = []
+            for _ in range(mc_dropout_samples):
+                out = self.pred_layer(x)
+                out = out.reshape(batch_size, num_nodes, self.horizon)
+                out = out.permute(0, 2, 1)
+                predictions.append(out.unsqueeze(-1))  # [batch, horizon, nodes, 1]
+            predictions = torch.cat(predictions, dim=-1)  # [batch, horizon, nodes, samples]
+            mean_out = predictions.mean(dim=-1)  # [batch, horizon, nodes]
+            std_out = predictions.std(dim=-1)  # [batch, horizon, nodes]
+            self.train(False)  # Disable dropout after inference
+        else:
+            out = self.pred_layer(x)
+            out = out.reshape(batch_size, num_nodes, self.horizon)
+            mean_out = out.permute(0, 2, 1)
+            std_out = torch.zeros_like(mean_out)  # No uncertainty during training
+
+        return mean_out, std_out, attention_matrices
 
 class MaskedLoss(nn.Module):
     """Base class for masked losses"""
@@ -440,7 +508,7 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
                 num_epochs=50, patience=20, device='cuda',
                 sampling_schedule='sigmoid', sampling_decay=0.98,
                 clip_grad_norm=5.0, ckpt_path="best_model.pt",
-                verbose=True):
+                verbose=True, scaler=None):  # Added scaler parameter
     """
     Training framework for the STGNN model
     """
@@ -458,7 +526,7 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         )
     
     # Initialize loss functions
-    criterion = MaskedMAE()
+    criterion = MaskedHuber(delta=1.0)
     mse_loss = MaskedMSE()
     
     # Move adjacency matrix to device
@@ -474,60 +542,32 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
     val_losses = []
     val_maes = []
     val_rmses = []
+    val_maes_original = []  # Store MAE in original units
+    val_rmses_original = []  # Store RMSE in original units
     
     for epoch in range(num_epochs):
-        # Tính sampling probability cho epoch hiện tại
         sampling_prob = get_sampling_prob(epoch, num_epochs, schedule=sampling_schedule, k=sampling_decay)
         
         # Training
         model.train()
         epoch_loss = 0
-        
-        # Thêm logging để debug
-        if verbose:
-            print(f"\nStarting epoch {epoch+1}")
-        
         for batch_idx, (x_batch, y_batch) in enumerate(train_loader):
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
             
-            # Kiểm tra input
-            if torch.isnan(x_batch).any():
-                print(f"NaN detected in input batch {batch_idx}")
-            if torch.isnan(y_batch).any():
-                print(f"NaN detected in target batch {batch_idx}")
-            
-            # Forward pass
             optimizer.zero_grad()
-            y_pred, _ = model(x_batch, static_adj, sampling_prob=sampling_prob)
-            
-            # Kiểm tra predictions
-            if torch.isnan(y_pred).any():
-                print(f"NaN detected in predictions batch {batch_idx}")
-            
-            # Calculate loss với debug info
+            y_pred, _, _ = model(x_batch, static_adj, sampling_prob=sampling_prob, mc_dropout_samples=1)
             loss = criterion(y_pred, y_batch)
-            if torch.isnan(loss).any():
-                print(f"NaN detected in loss batch {batch_idx}")
-                print(f"y_pred range: [{y_pred.min():.4f}, {y_pred.max():.4f}]")
-                print(f"y_batch range: [{y_batch.min():.4f}, {y_batch.max():.4f}]")
-            
-            # Backward pass
             loss.backward()
-            
-            # Gradient clipping
             if clip_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
-                
             optimizer.step()
             epoch_loss += loss.item()
             
-            # Print progress
             if verbose and (batch_idx % 10 == 0):
                 print(f"Epoch {epoch+1}/{num_epochs}, Batch {batch_idx+1}/{len(train_loader)}, "
                       f"Loss: {loss.item():.6f}, Sampling Prob: {sampling_prob:.4f}")
         
-        # Average loss for epoch
         epoch_loss /= len(train_loader)
         train_losses.append(epoch_loss)
         
@@ -536,28 +576,20 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         val_loss = 0
         preds = []
         truths = []
-        
         with torch.no_grad():
             for x_batch, y_batch in val_loader:
-                x_batch = x_batch.to(device) 
+                x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device)
-                
-                # Forward pass (no perturbation during validation)
-                y_pred, _ = model(x_batch, static_adj)  # sampling_prob defaults to 1.0
-                
-                # Calculate loss
+                y_pred, _, _ = model(x_batch, static_adj, mc_dropout_samples=10)
                 loss = criterion(y_pred, y_batch)
                 val_loss += loss.item()
-                
-                # Store predictions and ground truth
                 preds.append(y_pred.cpu().numpy())
                 truths.append(y_batch.cpu().numpy())
         
-        # Average validation loss
         val_loss /= len(val_loader)
         val_losses.append(val_loss)
         
-        # Calculate metrics
+        # Compute metrics in normalized space
         preds = np.concatenate(preds, axis=0)
         truths = np.concatenate(truths, axis=0)
         val_mae = np.mean(np.abs(preds - truths))
@@ -565,10 +597,28 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         val_maes.append(val_mae)
         val_rmses.append(val_rmse)
         
-        # Print epoch results with sampling probability
+        # Inverse-transform predictions and ground truth to compute metrics in original units
+        if scaler is not None:
+            preds_2d = preds.reshape(-1, preds.shape[-1])
+            truths_2d = truths.reshape(-1, truths.shape[-1])
+            preds_original = scaler.inverse_transform(preds_2d).reshape(preds.shape)
+            truths_original = scaler.inverse_transform(truths_2d).reshape(truths.shape)
+            val_mae_original = np.mean(np.abs(preds_original - truths_original))
+            val_rmse_original = np.sqrt(np.mean((preds_original - truths_original) ** 2))
+            val_maes_original.append(val_mae_original)
+            val_rmses_original.append(val_rmse_original)
+        else:
+            val_mae_original = val_mae
+            val_rmse_original = val_rmse
+            val_maes_original.append(val_mae_original)
+            val_rmses_original.append(val_rmse_original)
+        
+        # Print epoch results including original units
         if verbose:
             print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_loss:.6f}, "
                   f"Val Loss: {val_loss:.6f}, Val MAE: {val_mae:.6f}, Val RMSE: {val_rmse:.6f}, "
+                  f"Val MAE (original units): {val_mae_original:.2f} vehicles/15min, "
+                  f"Val RMSE (original units): {val_rmse_original:.2f} vehicles/15min, "
                   f"Sampling Prob: {sampling_prob:.4f}")
         
         # Learning rate scheduling
@@ -578,20 +628,17 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             counter = 0
-            
-            # Save the best model
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_loss': best_val_loss,
             }, ckpt_path)
-            
             if verbose:
                 print(f"Saved best model with validation loss: {best_val_loss:.6f}")
         else:
             counter += 1
-            
+        
         if counter >= patience:
             if verbose:
                 print(f"Early stopping triggered after {epoch+1} epochs")
@@ -603,35 +650,42 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
     
     test_loss = 0
     test_preds = []
+    test_std = []
     test_truths = []
-    
     with torch.no_grad():
         for x_batch, y_batch in test_loader:
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
-            
-            # Forward pass
-            y_pred, _ = model(x_batch, static_adj)
-            
-            # Calculate loss
+            y_pred, y_std, _ = model(x_batch, static_adj, mc_dropout_samples=10)
             loss = criterion(y_pred, y_batch)
             test_loss += loss.item()
-            
-            # Store predictions and ground truth
             test_preds.append(y_pred.cpu().numpy())
+            test_std.append(y_std.cpu().numpy())
             test_truths.append(y_batch.cpu().numpy())
     
-    # Average test loss
     test_loss /= len(test_loader)
-    
-    # Calculate metrics
     test_preds = np.concatenate(test_preds, axis=0)
+    test_std = np.concatenate(test_std, axis=0)
     test_truths = np.concatenate(test_truths, axis=0)
     test_mae = np.mean(np.abs(test_preds - test_truths))
     test_rmse = np.sqrt(np.mean((test_preds - test_truths) ** 2))
     
+    # Compute test metrics in original units
+    if scaler is not None:
+        test_preds_2d = test_preds.reshape(-1, test_preds.shape[-1])
+        test_truths_2d = test_truths.reshape(-1, test_truths.shape[-1])
+        test_preds_original = scaler.inverse_transform(test_preds_2d).reshape(test_preds.shape)
+        test_truths_original = scaler.inverse_transform(test_truths_2d).reshape(test_truths.shape)
+        test_mae_original = np.mean(np.abs(test_preds_original - test_truths_original))
+        test_rmse_original = np.sqrt(np.mean((test_preds_original - test_truths_original) ** 2))
+    else:
+        test_mae_original = test_mae
+        test_rmse_original = test_rmse
+    
     if verbose:
-        print(f"Test Loss: {test_loss:.6f}, Test MAE: {test_mae:.6f}, Test RMSE: {test_rmse:.6f}")
+        print(f"Test Loss: {test_loss:.6f}, Test MAE: {test_mae:.6f}, Test RMSE: {test_rmse:.6f}, "
+              f"Test MAE (original units): {test_mae_original:.2f} vehicles/15min, "
+              f"Test RMSE (original units): {test_rmse_original:.2f} vehicles/15min")
     
     # Return results
     return {
@@ -639,10 +693,15 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         'val_losses': val_losses,
         'val_maes': val_maes,
         'val_rmses': val_rmses,
+        'val_maes_original': val_maes_original,  # Added
+        'val_rmses_original': val_rmses_original,  # Added
         'test_loss': test_loss,
         'test_mae': test_mae,
         'test_rmse': test_rmse,
+        'test_mae_original': test_mae_original,  # Added
+        'test_rmse_original': test_rmse_original,  # Added
         'predictions': test_preds,
+        'uncertainty': test_std,
         'ground_truth': test_truths
     }
 
@@ -785,7 +844,7 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     input_dim = data_tensor.shape[-1]  # directions + 3
     output_dim = 1  # Predicting flow only
     model = EnhancedSTGNN(
-        input_dim=input_dim,
+        input_dim=5,  # Updated to 5
         num_nodes=len(scat_ids),
         hidden_dim=hidden_dim,
         output_dim=output_dim,
@@ -810,7 +869,8 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
         num_epochs=num_epochs,
         patience=patience,
         device=device,
-        ckpt_path=os.path.join(output_dir, "best_model.pt")
+        ckpt_path=os.path.join(output_dir, "best_model.pt"),
+        scaler=scaler  # Pass the scaler to train_stgnn
     )
     
     # Sau khi training hoàn tất, tính và hiển thị detailed metrics
@@ -827,7 +887,7 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     print("\nMetrics by Prediction Horizon:")
     print("------------------------------")
     for h in range(horizon):
-        print(f"Horizon {h+1:2d} ({(h+1)*5:2d} min): MAE = {mae_by_horizon[h]:.4f}, RMSE = {rmse_by_horizon[h]:.4f}")
+        print(f"Horizon {h+1:2d} ({(h+1)*15:2d} min): MAE = {mae_by_horizon[h]:.4f}, RMSE = {rmse_by_horizon[h]:.4f}")
     
     # Tính metrics tổng thể
     overall_mae = np.mean(mae_by_horizon)
@@ -889,138 +949,144 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     plt.savefig(os.path.join(output_dir, 'training_metrics.png'))
     
     # 10. Save predictions
+    # Compute variance of flows for each SCATS site to identify high-variance sites
+    flow_values = data_tensor[:, :, 0]  # Shape: (timesteps, nodes)
+    variances = np.var(flow_values, axis=0)  # Shape: (nodes,)
+    variance_threshold = np.percentile(variances, 75)  # Top 25% variance
+    high_variance_nodes = np.where(variances > variance_threshold)[0]
+
+    # Apply Exponential Moving Average to high-variance nodes
+    def apply_ema(data, alpha=0.1):
+        """Apply Exponential Moving Average to a 1D array."""
+        ema = np.copy(data)
+        for t in range(1, len(data)):
+            ema[t] = alpha * data[t] + (1 - alpha) * ema[t-1]
+        return ema
+    
     print("Saving prediction results...")
     # Reshape predictions and ground truth for inverse transform
     preds_3d = results['predictions']  # Shape: (samples, horizon, nodes)
     truth_3d = results['ground_truth']
+    uncertainty_3d = results['uncertainty']  # Shape: (samples, horizon, nodes)
 
-    # Reshape to 2D (samples*horizon, nodes)
+    # Apply EMA to high-variance nodes for both predictions and uncertainty
+    for node_idx in high_variance_nodes:
+        for sample_idx in range(preds_3d.shape[0]):
+            preds_3d[sample_idx, :, node_idx] = apply_ema(preds_3d[sample_idx, :, node_idx])
+            uncertainty_3d[sample_idx, :, node_idx] = apply_ema(uncertainty_3d[sample_idx, :, node_idx])
+
+    # Reshape to 2D (samples*horizon, nodes) for inverse transform
     preds_2d = preds_3d.reshape(-1, preds_3d.shape[-1])
     truth_2d = truth_3d.reshape(-1, truth_3d.shape[-1])
+    uncertainty_2d = uncertainty_3d.reshape(-1, uncertainty_3d.shape[-1])
 
     # Inverse transform using the scaler
     preds_original = scaler.inverse_transform(preds_2d).reshape(preds_3d.shape)
     truth_original = scaler.inverse_transform(truth_2d).reshape(truth_3d.shape)
+    # Uncertainty is in the same normalized space as predictions, so apply the same transformation to std dev
+    uncertainty_original = scaler.scale_ * uncertainty_2d.reshape(uncertainty_3d.shape)  # Scale std dev
 
     # Save to CSV
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     np.save(os.path.join(output_dir, f'predictions_{timestamp}.npy'), preds_original)
     np.save(os.path.join(output_dir, f'ground_truth_{timestamp}.npy'), truth_original)
+    np.save(os.path.join(output_dir, f'uncertainty_{timestamp}.npy'), uncertainty_original)
 
 
 def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
-    """
-    Tiền xử lý dữ liệu không gian và thời gian cho mô hình STGNN.
-    Tách riêng đặc trưng thời gian toàn cục và giá trị flow theo node.
-    """
-    # 1. Xử lý dữ liệu không gian
     spatial_df = pd.read_csv(spatial_file)
     scat_ids = sorted(spatial_df['SCATS Number'].unique())
     num_nodes = len(scat_ids)
-    
-    # Tạo ma trận kề
     scat_to_idx = {scat: i for i, scat in enumerate(scat_ids)}
     adj_matrix = np.zeros((num_nodes, num_nodes), dtype=int)
-    
     for _, row in spatial_df.iterrows():
         node = scat_to_idx[row['SCATS Number']]
-        neighbors = [str(n) for n in str(row['Neighbours']).split(',') if n.strip()]
+        neighbors = [str(n) for n in str(row['Neighbours']).split(';') if n.strip()]
         for nbr in neighbors:
             if nbr in scat_to_idx:
                 adj_matrix[node, scat_to_idx[nbr]] = 1
                 adj_matrix[scat_to_idx[nbr], node] = 1
-    
     coordinates = {
         row['SCATS Number']: {
             'lat': row['Latitude'], 
             'lon': row['Longitude']
         } for _, row in spatial_df.iterrows()
     }
-
-    # 2. Xử lý dữ liệu thời gian
     temporal_df = pd.read_csv(temporal_file)
     temporal_df['timestamp'] = pd.to_datetime(temporal_df['timestamp'], format='%d/%m/%Y %H:%M')
-    
-    # Tổng hợp (sum) các bản ghi trùng lặp trong cùng timestamp
     temporal_df = temporal_df.groupby(['timestamp', 'scat_id', 'direction'])[value_col].sum().reset_index()
-    
-    # Tạo đặc trưng thời gian toàn cục (không lặp lại theo node)
     unique_timestamps = sorted(temporal_df['timestamp'].unique())
     temporal_features = pd.DataFrame({
         'timestamp': unique_timestamps,
         'hour': pd.to_datetime(unique_timestamps).hour,
         'weekend': pd.to_datetime(unique_timestamps).dayofweek >= 5,
-        'day': pd.to_datetime(unique_timestamps).dayofweek + 1  # 1-7 (Chủ nhật = 1)
+        'day': pd.to_datetime(unique_timestamps).dayofweek + 1
     }).set_index('timestamp')
-    
-    # Chuẩn hóa đặc trưng thời gian
     temporal_features['hour'] = temporal_features['hour'] / 23.0
     temporal_features['weekend'] = temporal_features['weekend'].astype(int)
     temporal_features['day'] = temporal_features['day'] / 7.0
-    
-    # Kiểm tra tính nhất quán của SCATS
     temporal_scats = temporal_df['scat_id'].unique()
     if set(temporal_scats) != set(scat_ids):
         missing = set(scat_ids) - set(temporal_scats)
         raise ValueError(f"Missing SCATS in temporal data: {missing}")
-    
     directions = temporal_df['direction'].unique()
     scat_ids = sorted(temporal_df['scat_id'].unique())
-
     full_multi_index = pd.MultiIndex.from_product([scat_ids, directions], 
                                              names=['scat_id', 'direction'])
-    # Pivot and reindex with fill_value=0 for missing combinations
     flow_matrix = (
         temporal_df.pivot(
             index='timestamp',
             columns=['scat_id', 'direction'],
             values=value_col
         )
-        .reindex(columns=full_multi_index, fill_value=0)  # Fill missing with 0
+        .reindex(columns=full_multi_index, fill_value=0)
     )
-
-    # Get all directions and SCATs
     multi_columns = pd.MultiIndex.from_product([scat_ids, directions], names=['scat_id', 'direction'])
     flow_matrix = flow_matrix.reindex(columns=multi_columns)
-    
-    # Áp dụng KNN imputation chỉ cho flow values
     print("Applying KNN imputation for flow values...")
-    # Impute missing values
+    imputed_mask = (flow_matrix == 0).astype(int)
     imputer = KNNImputer(n_neighbors=5, weights='distance')
     flow_imputed = imputer.fit_transform(flow_matrix.values)
-
-    # Kiểm tra kích thước của flow_imputed
     if flow_imputed.shape[1] != flow_matrix.shape[1]:
         print(f"Warning: Number of columns in flow_imputed ({flow_imputed.shape[1]}) does not match flow_matrix ({flow_matrix.shape[1]}). Adjusting columns.")
-        # Chỉ lấy các cột tương ứng với flow_matrix
         flow_imputed = flow_imputed[:, :flow_matrix.shape[1]]
-
     flow_df = pd.DataFrame(flow_imputed, index=flow_matrix.index, columns=flow_matrix.columns)
-    # Reshape to (timesteps, nodes, directions)
-    flow_values = np.stack(
-        [flow_df.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
-        axis=1
-    )
-    # Kiểm tra missing values
+    imputed_df = pd.DataFrame(imputed_mask.values, index=flow_matrix.index, columns=flow_matrix.columns)
+    print("Flow matrix shape after imputation:", flow_df.shape)
+    print("Imputed mask shape:", imputed_df.shape)
+    try:
+        flow_values = np.stack(
+            [flow_df.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
+            axis=1
+        )
+        print("Flow values shape:", flow_values.shape)
+        imputed_values = np.stack(
+            [imputed_df.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
+            axis=1
+        )
+        print("Imputed values shape:", imputed_values.shape)
+    except Exception as e:
+        print(f"Error during reshaping flow_values or imputed_values: {e}")
+        raise
     missing_after = flow_df.isna().sum().sum()
     if missing_after > 0:
         print(f"Warning: {missing_after} missing values remain in flow data")
     else:
         print("All flow values have been successfully imputed")
-    
-    # Tạo tensor 3D cuối cùng
-    time_features = temporal_features.values[:, None, :]  # (timesteps, 1, 3)
-    
-    # Kết hợp thành tensor cuối cùng shape (timesteps, nodes, 4)
-    data_tensor = np.concatenate([
-        flow_values[..., :1],  # Keep only first direction,  # (T, N, 1)
-        np.broadcast_to(time_features, 
-                       (time_features.shape[0], flow_values.shape[1], time_features.shape[2]))
-    ], axis=-1)
-    
+    time_features = temporal_features.values[:, None, :]
+    print("Time features shape:", time_features.shape)
+    try:
+        data_tensor = np.concatenate([
+            flow_values[..., :1],
+            imputed_values[..., :1],
+            np.broadcast_to(time_features, 
+                           (time_features.shape[0], flow_values.shape[1], time_features.shape[2]))
+        ], axis=-1)
+    except Exception as e:
+        print(f"Error during data_tensor creation: {e}")
+        raise
     print("\nFinal tensor shape:", data_tensor.shape)
-    print("Features: [flow, hour, weekend, day]")
-
+    print("Features: [flow, imputed_flag, hour, weekend, day]")
     return adj_matrix, data_tensor, scat_ids, coordinates
 
 if __name__ == "__main__":
