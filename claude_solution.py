@@ -329,7 +329,7 @@ class TransformerLayer(nn.Module):
         return x
 
 class EnhancedSTGNN(nn.Module):
-    def __init__(self, input_dim=19, num_nodes=41, hidden_dim=32, output_dim=1, num_layers=2,
+    def __init__(self, input_dim=19, num_nodes=41, hidden_dim=64, output_dim=1, num_layers=3,
                  dropout=0.1, window_size=48, horizon=4, embedding_dim=16):
         super().__init__()
         self.window_size = window_size
@@ -339,8 +339,8 @@ class EnhancedSTGNN(nn.Module):
         self.hour_embedding = nn.Linear(1, embedding_dim)
         self.day_embedding = nn.Linear(1, embedding_dim)
         self.weekend_embedding = nn.Linear(1, embedding_dim)
-        self.num_directions = (input_dim - 3) // 2  # input_dim = num_directions (flow) + num_directions (imputed_flag) + 3
-        total_features = self.num_directions + self.num_directions + embedding_dim + 3 * embedding_dim
+        self.num_directions = (input_dim - (2 * embedding_dim + 1)) // 2  # 2*embedding_dim for hour_pe and day_pe, 1 for weekend
+        total_features = self.num_directions + self.num_directions + embedding_dim + 2 * embedding_dim + embedding_dim  # flow, imputed_flag, node_emb, hour_pe, day_pe, weekend_emb
         self.input_embedding = nn.Conv2d(
             in_channels=total_features,
             out_channels=hidden_dim,
@@ -376,8 +376,8 @@ class EnhancedSTGNN(nn.Module):
         node_emb = node_emb.expand(batch_size, self.window_size, -1, -1)
 
         # Create time embeddings
-        hour_emb = self.hour_embedding(hour)
-        day_emb = self.day_embedding(day)
+        hour_emb = x[..., self.num_directions*2:self.num_directions*2+embedding_dim]
+        day_emb = x[..., self.num_directions*2+embedding_dim:self.num_directions*2+2*embedding_dim]
         weekend_emb = self.weekend_embedding(weekend)
 
         # Combine features and embeddings
@@ -426,7 +426,38 @@ class EnhancedSTGNN(nn.Module):
             std_out = torch.zeros_like(mean_out)  # No uncertainty during training
 
         return mean_out, std_out, attention_matrices
+class MaskedLoss(nn.Module):
+    def __init__(self, null_val=0.0):
+        super(MaskedLoss, self).__init__()
+        self.null_val = null_val
 
+    def _get_mask(self, target):
+        """Create a mask for non-null values."""
+        mask = (target != self.null_val).float()
+        return mask
+
+    def forward(self, preds, target):
+        raise NotImplementedError("Subclasses should implement this method.")
+    
+class WeightedMaskedHuber(MaskedLoss):
+    def __init__(self, delta=1.0, null_val=0.0, weight_threshold=0.5):
+        super(WeightedMaskedHuber, self).__init__(null_val)
+        self.delta = delta
+        self.weight_threshold = weight_threshold
+
+    def forward(self, preds, target):
+        mask = self._get_mask(target)
+        diff = torch.abs(preds - target)
+        weights = torch.where(target > self.weight_threshold, 2.0, 1.0)  # Higher weight for high-flow periods
+        huber_loss = torch.where(
+            diff <= self.delta,
+            0.5 * torch.square(diff),
+            self.delta * (diff - 0.5 * self.delta)
+        )
+        loss = huber_loss * mask * weights
+        loss = torch.where(torch.isnan(loss), torch.zeros_like(loss), loss)
+        return torch.mean(loss)
+    
 class MaskedLoss(nn.Module):
     """Base class for masked losses"""
     def __init__(self, null_val=0.0):
@@ -512,7 +543,8 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         )
     
     # Initialize loss functions
-    criterion = MaskedHuber(delta=1.0)
+    #criterion = MaskedHuber(delta=1.0)
+    criterion = WeightedMaskedHuber(delta=1.0, weight_threshold=0.5)  # Adjust threshold based on normalized flow values
     mse_loss = MaskedMSE()
     
     # Move adjacency matrix to device
@@ -602,10 +634,10 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
         # Print epoch results including original units
         if verbose:
             print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_loss:.6f}, "
-                  f"Val Loss: {val_loss:.6f}, Val MAE: {val_mae:.6f}, Val RMSE: {val_rmse:.6f}, "
-                  f"Val MAE (original units): {val_mae_original:.2f} vehicles/15min, "
-                  f"Val RMSE (original units): {val_rmse_original:.2f} vehicles/15min, "
-                  f"Sampling Prob: {sampling_prob:.4f}")
+                f"Val Loss: {val_loss:.6f}, Val MAE: {val_mae:.6f}, Val RMSE: {val_rmse:.6f}, "
+                f"Val MAE (original units): {val_mae_original:.2f} vehicles/15min, "
+                f"Val RMSE (original units): {val_rmse_original:.2f} vehicles/15min, "
+                f"Sampling Prob: {sampling_prob:.4f}")
         
         # Learning rate scheduling
         scheduler.step(val_loss)
@@ -736,7 +768,7 @@ def calculate_metrics_by_horizon(predictions, ground_truth):
 
 def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
                       window_size=48, horizon=4, batch_size=32,
-                      hidden_dim=32, num_layers=2, dropout=0.1,
+                      hidden_dim=64, num_layers=3, dropout=0.1,
                       num_epochs=50, learning_rate=0.001, patience=10):
     
     # 1. Preprocess Data
@@ -971,6 +1003,13 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     np.save(os.path.join(output_dir, f'ground_truth_{timestamp}.npy'), truth_original)
     np.save(os.path.join(output_dir, f'uncertainty_{timestamp}.npy'), uncertainty_original)
 
+def create_cyclical_encoding(values, max_value, embedding_dim):
+    position = values.reshape(-1, 1)  # Shape: (timesteps, 1)
+    div_term = np.exp(np.arange(0, embedding_dim, 2) * (-np.log(10000.0) / embedding_dim))
+    pe = np.zeros((len(values), embedding_dim))
+    pe[:, 0::2] = np.sin(position * div_term)
+    pe[:, 1::2] = np.cos(position * div_term)
+    return pe
 
 def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     spatial_df = pd.read_csv(spatial_file)
@@ -998,16 +1037,17 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     temporal_df['timestamp'] = pd.to_datetime(temporal_df['timestamp'], format='%d/%m/%Y %H:%M')
     temporal_df = temporal_df.groupby(['timestamp', 'scat_id', 'direction'])[value_col].sum().reset_index()
     unique_timestamps = sorted(temporal_df['timestamp'].unique())
+    hour_values = pd.to_datetime(unique_timestamps).hour
+    day_values = pd.to_datetime(unique_timestamps).dayofweek + 1
+    hour_pe = create_cyclical_encoding(hour_values / 23.0, 24, embedding_dim=16)
+    day_pe = create_cyclical_encoding(day_values / 7.0, 7, embedding_dim=16)
     temporal_features = pd.DataFrame({
         'timestamp': unique_timestamps,
-        'hour': pd.to_datetime(unique_timestamps).hour,
-        'weekend': pd.to_datetime(unique_timestamps).dayofweek >= 5,
-        'day': pd.to_datetime(unique_timestamps).dayofweek + 1
+        'hour_pe': list(hour_pe),
+        'day_pe': list(day_pe),
+        'weekend': (pd.to_datetime(unique_timestamps).dayofweek >= 5).astype(int)
     }).set_index('timestamp')
 
-    temporal_features['hour'] = temporal_features['hour'] / 23.0
-    temporal_features['weekend'] = temporal_features['weekend'].astype(int)
-    temporal_features['day'] = temporal_features['day'] / 7.0
     temporal_scats = temporal_df['scat_id'].unique()
     if set(temporal_scats) != set(scat_ids):
         missing = set(scat_ids) - set(temporal_scats)
@@ -1060,15 +1100,19 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     else:
         print("All flow values have been successfully imputed")
 
-    time_features = temporal_features.values[:, None, :]
+    time_features = np.stack([
+    temporal_features['hour_pe'].values,
+    temporal_features['day_pe'].values,
+    temporal_features['weekend'].values[:, None]
+    ], axis=-1)  # Shape: (timesteps, 1, 2*embedding_dim + 1)
     print("Time features shape:", time_features.shape)
-    
+
+    time_features = np.broadcast_to(time_features, (time_features.shape[0], flow_values.shape[1], time_features.shape[2]))
     try:
         data_tensor = np.concatenate([
-            flow_values,  # Include all directions
-            imputed_values,  # Include imputed flags for all directions
-            np.broadcast_to(time_features,
-                           (time_features.shape[0], flow_values.shape[1], time_features.shape[2]))
+        flow_values,
+        imputed_values,
+        time_features
         ], axis=-1)
     except Exception as e:
         print(f"Error during data_tensor creation: {e}")
@@ -1078,7 +1122,7 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     return adj_matrix, data_tensor, scat_ids, coordinates
 
 if __name__ == "__main__":
-    model = EnhancedSTGNN(input_dim=4, num_nodes=41, hidden_dim=32, output_dim=1)
+    model = EnhancedSTGNN(input_dim=19, num_nodes=41, hidden_dim=64, output_dim=1)
     model = model.to(device)
     # Specify your file paths here
     run_stgnn_pipeline(
@@ -1088,8 +1132,8 @@ if __name__ == "__main__":
         window_size=48,       # 24 time steps as historical context
         horizon=4,           # Predict next 12 time steps
         batch_size=32, 
-        hidden_dim=32,
-        num_layers=2,
+        hidden_dim=64,
+        num_layers=3,
         dropout=0.1,
         num_epochs=50,
         learning_rate=0.001,

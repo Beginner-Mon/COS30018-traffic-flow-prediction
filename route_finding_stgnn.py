@@ -51,16 +51,16 @@ def round_to_nearest_15min(dt):
 
 
 def prepare_input_data(temporal_df, start_time, window_size=48, num_nodes=41):
-    """Prepare input data for the model."""
+    """Prepare input data for the model, including all directions."""
     start_time = round_to_nearest_15min(start_time)
     end_time = start_time - timedelta(minutes=15 * window_size)
     time_range = pd.date_range(end_time, start_time - timedelta(minutes=15), freq='15min')
     if len(time_range) != window_size:
         raise ValueError(f"Expected {window_size} time steps, but got {len(time_range)}")
 
-    # Filter temporal data
-    df = temporal_df[(temporal_df['timestamp'].isin(time_range)) & (temporal_df['direction'] == 'N')]
-    if len(df) != window_size * num_nodes:
+    # Filter temporal data for the time range (include all directions)
+    df = temporal_df[temporal_df['timestamp'].isin(time_range)]
+    if len(df) < window_size * num_nodes:  # Check may need adjustment based on directions
         raise ValueError("Incomplete historical data for the given time window")
 
     # Create temporal features
@@ -71,24 +71,48 @@ def prepare_input_data(temporal_df, start_time, window_size=48, num_nodes=41):
         'day': (pd.to_datetime(time_range).dayofweek + 1) / 7.0
     })
 
-    # Pivot flow data
-    flow_matrix = df.pivot(index='timestamp', columns='scat_id', values='flow')
-    flow_matrix = flow_matrix.reindex(index=time_range, fill_value=0)
+    # Pivot flow data for all directions
+    directions = sorted(temporal_df['direction'].unique())
+    num_directions = len(directions)
+    scat_ids = sorted(temporal_df['scat_id'].unique())
+    full_multi_index = pd.MultiIndex.from_product([scat_ids, directions],
+                                                 names=['scat_id', 'direction'])
+    flow_matrix = (
+        df.pivot(
+            index='timestamp',
+            columns=['scat_id', 'direction'],
+            values='flow'
+        )
+        .reindex(index=time_range, columns=full_multi_index, fill_value=0)
+    )
     imputed_mask = (flow_matrix == 0).astype(int)
 
+    # Reshape flow and imputed values
+    flow_values = np.stack(
+        [flow_matrix.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
+        axis=1
+    )  # Shape: (window_size, nodes, num_directions)
+    imputed_values = np.stack(
+        [imputed_mask.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
+        axis=1
+    )  # Shape: (window_size, nodes, num_directions)
+
+    # Normalize flow values using the scaler
+    flow_values_2d = flow_values.reshape(-1, num_directions)  # Shape: (window_size*nodes, num_directions)
+    flow_normalized = scaler.transform(flow_values_2d)
+    flow_normalized = flow_normalized.reshape(flow_values.shape)  # Shape: (window_size, nodes, num_directions)
+
     # Create input tensor
-    flow_values = flow_matrix.values[:, :, np.newaxis]  # Shape: (window_size, nodes, 1)
-    imputed_values = imputed_mask.values[:, :, np.newaxis]  # Shape: (window_size, nodes, 1)
     time_features = temporal_features[['hour', 'weekend', 'day']].values[:, np.newaxis, :]  # Shape: (window_size, 1, 3)
     time_features = np.broadcast_to(time_features, (window_size, num_nodes, 3))
-    input_tensor = np.concatenate([flow_values, imputed_values, time_features],
-                                  axis=-1)  # Shape: (window_size, nodes, 5)
-    return torch.FloatTensor(input_tensor).unsqueeze(0).to(device), scaler.transform(flow_matrix.values)
+    input_tensor = np.concatenate([flow_normalized, imputed_values, time_features],
+                                  axis=-1)  # Shape: (window_size, nodes, num_directions*2 + 3)
+    return torch.FloatTensor(input_tensor).unsqueeze(0).to(device), num_directions
 
 
 def predict_flows(model, input_tensor, static_adj, start_time, num_nodes, horizon=4, num_steps=12,
                   mc_dropout_samples=10):
-    """Predict flows for the next num_steps time steps."""
+    """Predict flows for the next num_steps time steps for all directions."""
     predictions = []
     uncertainties = []
     current_input = input_tensor.clone()
@@ -96,22 +120,29 @@ def predict_flows(model, input_tensor, static_adj, start_time, num_nodes, horizo
     for step in range(0, num_steps, horizon):
         with torch.no_grad():
             pred, uncertainty, _ = model(current_input, static_adj, mc_dropout_samples=mc_dropout_samples)
-        predictions.append(pred.cpu().numpy())  # Shape: (1, horizon, nodes)
+        predictions.append(pred.cpu().numpy())
         uncertainties.append(uncertainty.cpu().numpy())
 
         # Prepare next input by shifting and appending predictions
         if step + horizon < num_steps:
-            pred_flow = pred[:, :min(horizon, num_steps - step), :].cpu().numpy()  # Shape: (1, horizon, nodes)
-            pred_flow = pred_flow.reshape(-1, pred_flow.shape[-1])  # Shape: (horizon, nodes)
-            pred_flow = scaler.inverse_transform(pred_flow)  # Inverse transform to original units
-            pred_flow = scaler.transform(pred_flow)  # Transform back to normalized space
-            pred_flow = pred_flow.reshape(1, -1, pred_flow.shape[-1], 1)  # Shape: (1, horizon, nodes, 1)
+            horizon_steps = min(horizon, num_steps - step)
+            pred_flow = pred[:, :horizon_steps, :, :]
+            batch_size, time_steps, actual_nodes, num_directions = pred_flow.shape
 
-            # Update input tensor
+            # Reshape preserving the actual number of nodes from the prediction
+            pred_flow_2d = pred_flow.reshape(-1, num_directions)
+            pred_flow_2d = scaler.inverse_transform(pred_flow_2d)
+            pred_flow_2d = scaler.transform(pred_flow_2d)
+
+            # Reshape back using the original tensor dimensions
+            pred_flow = pred_flow_2d.reshape(batch_size, time_steps, actual_nodes, num_directions)
+
+            # Update input tensor - make sure dimensions match
             current_input = current_input[:, horizon:, :, :].clone()
-            new_input = torch.zeros_like(current_input[:, :min(horizon, num_steps - step), :, :])
-            new_input[:, :, :, 0:1] = torch.FloatTensor(pred_flow).to(device)  # Update flow
-            new_input[:, :, :, 1:2] = 0  # Imputed flag for predicted values
+            new_input = torch.zeros((1, horizon_steps, actual_nodes, current_input.shape[-1]), device=device)
+            new_input[:, :, :, :num_directions] = torch.FloatTensor(pred_flow).to(device)
+            new_input[:, :, :, num_directions:num_directions * 2] = 0
+
             # Update temporal features
             start_idx = step + horizon
             end_idx = start_idx + horizon
@@ -127,12 +158,12 @@ def predict_flows(model, input_tensor, static_adj, start_time, num_nodes, horizo
                 'day': (pd.to_datetime(time_range).dayofweek + 1) / 7.0
             })
             time_features = temporal_features[['hour', 'weekend', 'day']].values[:, np.newaxis, :]
-            time_features = np.broadcast_to(time_features, (min(horizon, num_steps - step), num_nodes, 3))
-            new_input[:, :, :, 2:] = torch.FloatTensor(time_features).to(device)
+            time_features = np.broadcast_to(time_features, (horizon_steps, actual_nodes, 3))
+            new_input[:, :, :, num_directions * 2:] = torch.FloatTensor(time_features).to(device)
             current_input = torch.cat([current_input, new_input], dim=1)
 
-    predictions = np.concatenate(predictions, axis=1)[:, :num_steps, :]  # Shape: (1, num_steps, nodes)
-    uncertainties = np.concatenate(uncertainties, axis=1)[:, :num_steps, :]  # Shape: (1, num_steps, nodes)
+    predictions = np.concatenate(predictions, axis=1)[:, :num_steps, :, :]  # Shape: (1, num_steps, nodes, num_directions)
+    uncertainties = np.concatenate(uncertainties, axis=1)[:, :num_steps, :, :]  # Shape: (1, num_steps, nodes, num_directions)
     return predictions, uncertainties
 
 
@@ -166,7 +197,7 @@ def find_shortest_paths(G, start, destination, k=5):
 
 def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, dest_scat, start_time_str,
                         scaler_path=None):
-    """Find the 5 shortest paths with predicted flows and crowded nodes."""
+    """Find the 5 shortest paths with predicted flows and crowded nodes, using all directions."""
     # Load data
     spatial_df = pd.read_csv(spatial_file)
     temporal_df = pd.read_csv(temporal_file)
@@ -198,19 +229,37 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
     if scaler_path and os.path.exists(scaler_path):
         scaler = torch.load(scaler_path)
     else:
-        flow_values = temporal_df[temporal_df['direction'] == 'N'].pivot(
-            index='timestamp', columns='scat_id', values='flow'
-        ).values
+        directions = temporal_df['direction'].unique()
+        scat_ids = sorted(temporal_df['scat_id'].unique())
+        full_multi_index = pd.MultiIndex.from_product([scat_ids, directions],
+                                                      names=['scat_id', 'direction'])
+        flow_matrix = (
+            temporal_df.pivot(
+                index='timestamp',
+                columns=['scat_id', 'direction'],
+                values='flow'
+            )
+            .reindex(columns=full_multi_index, fill_value=0)
+        )
+        flow_values = np.stack(
+            [flow_matrix.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
+            axis=1
+        )  # Shape: (timesteps, nodes, num_directions)
+        flow_values_2d = flow_values.reshape(-1, flow_values.shape[-1])  # Shape: (timesteps*nodes, num_directions)
         scaler = StandardScaler()
-        scaler.fit(flow_values)
+        scaler.fit(flow_values_2d)
         torch.save(scaler, 'scaler.pt')
+
+    # Determine input_dim and output_dim based on number of directions
+    num_directions = len(temporal_df['direction'].unique())
+    input_dim = num_directions * 2 + 3  # flow + imputed_flag per direction + 3 temporal features
 
     # Load model
     model = EnhancedSTGNN(
-        input_dim=5,
+        input_dim=input_dim,
         num_nodes=num_nodes,
         hidden_dim=64,
-        output_dim=1,
+        output_dim=num_directions,  # Predict all directions
         num_layers=3,
         dropout=0.1,
         window_size=48,
@@ -242,10 +291,10 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
     start_time = pd.to_datetime(start_time_str, format='%Y-%m-%d %H:%M:%S')
 
     # Prepare input data and predict flows
-    input_tensor, normalized_flows = prepare_input_data(temporal_df, start_time, window_size=48, num_nodes=num_nodes)
+    input_tensor, num_directions = prepare_input_data(temporal_df, start_time, window_size=48, num_nodes=num_nodes)
     flows_pred, uncertainties_pred = predict_flows(model, input_tensor, static_adj_tensor, start_time, num_nodes,
                                                    horizon=4, num_steps=12)
-    flows_pred = flows_pred[0]  # Shape: (num_steps, nodes)
+    flows_pred = flows_pred[0]  # Shape: (num_steps, nodes, num_directions)
     uncertainties_pred = uncertainties_pred[0]
 
     # Inverse-transform flows and uncertainties
@@ -258,14 +307,18 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
     flows_interpolated, uncertainties_interpolated = interpolate_flows(
         flows_pred_original, uncertainties_pred_original, num_steps=12, interval=15, target_interval=5
     )
-    flows_interpolated = flows_interpolated[0]  # Shape: (num_target_steps, nodes)
+    flows_interpolated = flows_interpolated[0]  # Shape: (num_target_steps, nodes, num_directions)
     uncertainties_interpolated = uncertainties_interpolated[0]
 
-    # Build dynamic adjacency matrix
+    # Aggregate flows across directions (e.g., sum) for each node and timestep
+    flows_interpolated_agg = flows_interpolated.sum(axis=-1)  # Shape: (num_target_steps, nodes)
+    uncertainties_interpolated_agg = uncertainties_interpolated.sum(axis=-1)  # Shape: (num_target_steps, nodes)
+
+    # Build dynamic adjacency matrix using aggregated flows
     dynamic_adj = build_dynamic_adjacency_matrix(
         nodes=scat_ids,
         coordinates=coordinates,
-        flows=flows_interpolated,
+        flows=flows_interpolated_agg,
         base_adj=static_adj,
         flow_threshold=1000,
         max_distance=1.0
@@ -275,7 +328,7 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
     G = nx.DiGraph()
     for scat in scat_ids:
         G.add_node(scat)
-    flows_at_start = flows_interpolated[0]  # Flows at the first 5-minute interval
+    flows_at_start = flows_interpolated_agg[0]  # Aggregated flows at the first 5-minute interval
     for i, scat1 in enumerate(scat_ids):
         for j, scat2 in enumerate(scat_ids):
             if dynamic_adj[0, i, j] == 1:
@@ -312,8 +365,8 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
         # Identify crowded nodes over the next 30 minutes (6 intervals at 5-minute steps)
         for node in path:
             node_idx = scat_to_idx[node]
-            for t in range(min(6, flows_interpolated.shape[0])):
-                flow = flows_interpolated[t, node_idx]
+            for t in range(min(6, flows_interpolated_agg.shape[0])):
+                flow = flows_interpolated_agg[t, node_idx]
                 if flow > 1000:
                     time_minutes = t * 5
                     path_details['crowded_nodes'].append((node, time_minutes))
@@ -331,7 +384,6 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
             print("Crowded Nodes (SCATS, Time in minutes):", details['crowded_nodes'])
         else:
             print("No crowded nodes predicted in the next 30 minutes.")
-
 
 if __name__ == "__main__":
     route_finding_stgnn(
