@@ -29,8 +29,8 @@ def main():
     output_dir = ''
     
     # Load predictions and ground truth
-    predictions_file = os.path.join(output_dir, 'predictions_11.npy')
-    ground_truth_file = os.path.join(output_dir, 'ground_truth_11.npy')
+    predictions_file = os.path.join(output_dir, 'predictions_12.npy')
+    ground_truth_file = os.path.join(output_dir, 'ground_truth_12.npy')
     
     predictions, ground_truth = load_data(predictions_file, ground_truth_file)
     

@@ -327,9 +327,9 @@ class TransformerLayer(nn.Module):
         x = x.permute(0, 3, 1, 2)  # [batch, channels, nodes, time]
 
         return x
-    
+
 class EnhancedSTGNN(nn.Module):
-    def __init__(self, input_dim=5, num_nodes=41, hidden_dim=64, output_dim=1, num_layers=3,
+    def __init__(self, input_dim=19, num_nodes=41, hidden_dim=32, output_dim=1, num_layers=2,
                  dropout=0.1, window_size=48, horizon=4, embedding_dim=16):
         super().__init__()
         self.window_size = window_size
@@ -339,9 +339,8 @@ class EnhancedSTGNN(nn.Module):
         self.hour_embedding = nn.Linear(1, embedding_dim)
         self.day_embedding = nn.Linear(1, embedding_dim)
         self.weekend_embedding = nn.Linear(1, embedding_dim)
-        self.num_directions = input_dim - 4  # flow, imputed_flag, hour, weekend, day -> num_directions = 1
-        # Include imputed_flag (1 channel) in total features
-        total_features = self.num_directions + 1 + embedding_dim + 3 * embedding_dim  # 1 + 1 + 16 + 48 = 66
+        self.num_directions = (input_dim - 3) // 2  # input_dim = num_directions (flow) + num_directions (imputed_flag) + 3
+        total_features = self.num_directions + self.num_directions + embedding_dim + 3 * embedding_dim
         self.input_embedding = nn.Conv2d(
             in_channels=total_features,
             out_channels=hidden_dim,
@@ -352,26 +351,13 @@ class EnhancedSTGNN(nn.Module):
             STGNNLayer(hidden_dim, dropout) for _ in range(num_layers)
         ])
         self.recurrent_layer = TransformerLayer(hidden_dim, num_heads=4, num_layers=2, dropout=dropout)
-        self.pred_layer = nn.Linear(hidden_dim * window_size, horizon)
+        self.pred_layer = nn.Linear(hidden_dim * window_size, horizon * self.num_directions)
         
     def perturb_input(self, x, noise_level=0.1):
         noise = torch.randn_like(x) * noise_level
         return x + noise
         
     def forward(self, x, static_adj=None, sampling_prob=1.0, mc_dropout_samples=10):
-        """
-        Forward pass with Monte Carlo Dropout for uncertainty quantification.
-        
-        Args:
-            x: Input tensor [batch, time, nodes, features]
-            static_adj: Static adjacency matrix [nodes, nodes]
-            sampling_prob: Sampling probability for training perturbation
-            mc_dropout_samples: Number of MC Dropout samples for uncertainty estimation
-        
-        Returns:
-            mean_out: Mean prediction [batch, horizon, nodes]
-            std_out: Standard deviation of predictions [batch, horizon, nodes]
-        """
         if self.training and sampling_prob < 1.0:
             x = self.perturb_input(x, noise_level=1.0 - sampling_prob)
 
@@ -380,10 +366,10 @@ class EnhancedSTGNN(nn.Module):
 
         # Split features
         flow = x[..., :self.num_directions]
-        imputed_flag = x[..., self.num_directions:self.num_directions+1]  # New feature
-        hour = x[..., self.num_directions+1:self.num_directions+2]
-        weekend = x[..., self.num_directions+2:self.num_directions+3]
-        day = x[..., self.num_directions+3:self.num_directions+4]
+        imputed_flag = x[..., self.num_directions:self.num_directions*2]
+        hour = x[..., self.num_directions*2:self.num_directions*2+1]
+        weekend = x[..., self.num_directions*2+1:self.num_directions*2+2]
+        day = x[..., self.num_directions*2+2:self.num_directions*2+3]
 
         # Create node embeddings
         node_emb = self.node_embedding.unsqueeze(0).unsqueeze(0)
@@ -397,7 +383,7 @@ class EnhancedSTGNN(nn.Module):
         # Combine features and embeddings
         x = torch.cat([
             flow,
-            imputed_flag,  # Include new feature
+            imputed_flag,
             node_emb,
             hour_emb,
             day_emb,
@@ -426,17 +412,17 @@ class EnhancedSTGNN(nn.Module):
             predictions = []
             for _ in range(mc_dropout_samples):
                 out = self.pred_layer(x)
-                out = out.reshape(batch_size, num_nodes, self.horizon)
-                out = out.permute(0, 2, 1)
-                predictions.append(out.unsqueeze(-1))  # [batch, horizon, nodes, 1]
-            predictions = torch.cat(predictions, dim=-1)  # [batch, horizon, nodes, samples]
-            mean_out = predictions.mean(dim=-1)  # [batch, horizon, nodes]
-            std_out = predictions.std(dim=-1)  # [batch, horizon, nodes]
+                out = out.reshape(batch_size, num_nodes, self.horizon, self.num_directions)
+                out = out.permute(0, 2, 1, 3)  # [batch, horizon, nodes, num_directions]
+                predictions.append(out.unsqueeze(-1))  # [batch, horizon, nodes, num_directions, 1]
+            predictions = torch.cat(predictions, dim=-1)  # [batch, horizon, nodes, num_directions, samples]
+            mean_out = predictions.mean(dim=-1)  # [batch, horizon, nodes, num_directions]
+            std_out = predictions.std(dim=-1)  # [batch, horizon, nodes, num_directions]
             self.train(False)  # Disable dropout after inference
         else:
             out = self.pred_layer(x)
-            out = out.reshape(batch_size, num_nodes, self.horizon)
-            mean_out = out.permute(0, 2, 1)
+            out = out.reshape(batch_size, num_nodes, self.horizon, self.num_directions)
+            mean_out = out.permute(0, 2, 1, 3)  # [batch, horizon, nodes, num_directions]
             std_out = torch.zeros_like(mean_out)  # No uncertainty during training
 
         return mean_out, std_out, attention_matrices
@@ -505,7 +491,7 @@ class MaskedHuber(MaskedLoss):
 
 def train_stgnn(model, train_loader, val_loader, test_loader, 
                 static_adj=None, optimizer=None, scheduler=None,
-                num_epochs=50, patience=20, device='cuda',
+                num_epochs=50, patience=10, device='cuda',
                 sampling_schedule='sigmoid', sampling_decay=0.98,
                 clip_grad_norm=5.0, ckpt_path="best_model.pt",
                 verbose=True, scaler=None):  # Added scaler parameter
@@ -514,7 +500,7 @@ def train_stgnn(model, train_loader, val_loader, test_loader,
     """
     # Initialize optimizer if not provided
     if optimizer is None:
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
     
     # Initialize scheduler if not provided
     if scheduler is None:
@@ -750,8 +736,8 @@ def calculate_metrics_by_horizon(predictions, ground_truth):
 
 def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
                       window_size=48, horizon=4, batch_size=32,
-                      hidden_dim=64, num_layers=3, dropout=0.1,
-                      num_epochs=50, learning_rate=0.001, patience=20):
+                      hidden_dim=32, num_layers=2, dropout=0.1,
+                      num_epochs=50, learning_rate=0.001, patience=10):
     
     # 1. Preprocess Data
     adj_matrix, data_tensor, scat_ids, coordinates = preprocess_traffic_data(
@@ -762,27 +748,27 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     
     # 2. Normalize flow data
     scaler = StandardScaler()
-    flow_values = data_tensor[:, :, 0]  # Take only flow value
-    flow_normalized = scaler.fit_transform(flow_values)
-    data_tensor[:, :, 0] = flow_normalized  # Update normalized flow data
+    num_directions = (data_tensor.shape[-1] - 3) // 2  # flow + imputed_flag per direction
+    flow_values = data_tensor[:, :, :num_directions]  # Shape: (timesteps, nodes, num_directions)
+    flow_values_2d = flow_values.reshape(-1, num_directions)  # Shape: (timesteps*nodes, num_directions)
+    flow_normalized = scaler.fit_transform(flow_values_2d)  # Shape: (timesteps*nodes, num_directions)
+    flow_normalized = flow_normalized.reshape(flow_values.shape)  # Shape: (timesteps, nodes, num_directions)
+    data_tensor[:, :, :num_directions] = flow_normalized
     
     # 3. Create sliding windows
     X, y = [], []
     num_samples = len(data_tensor) - window_size - horizon + 1
-    num_directions = data_tensor.shape[-1] - 3  # Assume last 3 features are temporal (hour, day, weekend)
     for i in range(num_samples):
-        # Input window
         X.append(data_tensor[i:i+window_size])  # Shape: (window_size, nodes, features)
-        # Target: only taking normalized flow data
-        y.append(data_tensor[i+window_size:i+window_size+horizon, :, 0])  # Take first feature (flow) only
+        y.append(data_tensor[i+window_size:i+window_size+horizon, :, :num_directions])  # Shape: (horizon, nodes, num_directions)
     
     X = np.array(X)  # Shape: (samples, window_size, nodes, features)
-    y = np.array(y)  # Shape: (samples, horizon, nodes)
+    y = np.array(y)  # Shape: (samples, horizon, nodes, num_directions)
     
-    # Data validation, for debugging purpose
+    # Data validation
     print("\nData structure after creating sliding windows:")
     print(f"X shape: {X.shape} (samples, window_size, nodes, features)")
-    print(f"y shape: {y.shape} (samples, horizon, nodes)")
+    print(f"y shape: {y.shape} (samples, horizon, nodes, num_directions)")
     print(f"X range: [{X.min():.4f}, {X.max():.4f}]")
     print(f"y range: [{y.min():.4f}, {y.max():.4f}]")
     
@@ -801,11 +787,6 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     # 5. Create DataLoaders
     class TrafficDataset(Dataset):
         def __init__(self, X, y):
-            """
-            Args:
-                X: Input tensor (samples, window_size, nodes, features)
-                y: Target tensor (samples, horizon, nodes)
-            """
             self.X = torch.FloatTensor(X)
             self.y = torch.FloatTensor(y)
             
@@ -813,7 +794,6 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
             return len(self.X)
             
         def __getitem__(self, idx):
-            # Không cần chuyển đổi shape vì đã đúng định dạng
             return self.X[idx], self.y[idx]
     
     train_dataset = TrafficDataset(X_train, y_train)
@@ -824,27 +804,26 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # In thông tin về batch để kiểm tra
     print("\nBatch shapes:")
     x_sample, y_sample = next(iter(train_loader))
     print(f"Input batch: {x_sample.shape} (batch, window_size, nodes, features)")
-    print(f"Target batch: {y_sample.shape} (batch, horizon, nodes)")
+    print(f"Target batch: {y_sample.shape} (batch, horizon, nodes, num_directions)")
     
     # 6. Load or create adjacency matrix
     hybrid_adj = build_hybrid_adjacency_matrix(
         nodes=scat_ids,
         network_data=adj_matrix,
         coordinates=coordinates,
-        threshold_distance=1.0,  # Distance in km, adjust as needed
+        threshold_distance=1.0,
     )
     static_adj = torch.FloatTensor(hybrid_adj).to(device)
     
     # 7. Initialize model
     print("Initializing STGNN model...")
-    input_dim = data_tensor.shape[-1]  # directions + 3
-    output_dim = 1  # Predicting flow only
+    input_dim = data_tensor.shape[-1]
+    output_dim = num_directions  # Predict all directions
     model = EnhancedSTGNN(
-        input_dim=5,  # Updated to 5
+        input_dim=input_dim,
         num_nodes=len(scat_ids),
         hidden_dim=hidden_dim,
         output_dim=output_dim,
@@ -870,7 +849,7 @@ def run_stgnn_pipeline(data_file, network_file, output_dir='./results',
         patience=patience,
         device=device,
         ckpt_path=os.path.join(output_dir, "best_model.pt"),
-        scaler=scaler  # Pass the scaler to train_stgnn
+        scaler=scaler
     )
     
     # Sau khi training hoàn tất, tính và hiển thị detailed metrics
@@ -999,6 +978,7 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     num_nodes = len(scat_ids)
     scat_to_idx = {scat: i for i, scat in enumerate(scat_ids)}
     adj_matrix = np.zeros((num_nodes, num_nodes), dtype=int)
+
     for _, row in spatial_df.iterrows():
         node = scat_to_idx[row['SCATS Number']]
         neighbors = [str(n) for n in str(row['Neighbours']).split(';') if n.strip()]
@@ -1006,12 +986,14 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
             if nbr in scat_to_idx:
                 adj_matrix[node, scat_to_idx[nbr]] = 1
                 adj_matrix[scat_to_idx[nbr], node] = 1
+
     coordinates = {
         row['SCATS Number']: {
             'lat': row['Latitude'], 
             'lon': row['Longitude']
         } for _, row in spatial_df.iterrows()
     }
+
     temporal_df = pd.read_csv(temporal_file)
     temporal_df['timestamp'] = pd.to_datetime(temporal_df['timestamp'], format='%d/%m/%Y %H:%M')
     temporal_df = temporal_df.groupby(['timestamp', 'scat_id', 'direction'])[value_col].sum().reset_index()
@@ -1022,6 +1004,7 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
         'weekend': pd.to_datetime(unique_timestamps).dayofweek >= 5,
         'day': pd.to_datetime(unique_timestamps).dayofweek + 1
     }).set_index('timestamp')
+
     temporal_features['hour'] = temporal_features['hour'] / 23.0
     temporal_features['weekend'] = temporal_features['weekend'].astype(int)
     temporal_features['day'] = temporal_features['day'] / 7.0
@@ -1029,6 +1012,7 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     if set(temporal_scats) != set(scat_ids):
         missing = set(scat_ids) - set(temporal_scats)
         raise ValueError(f"Missing SCATS in temporal data: {missing}")
+    
     directions = temporal_df['direction'].unique()
     scat_ids = sorted(temporal_df['scat_id'].unique())
     full_multi_index = pd.MultiIndex.from_product([scat_ids, directions], 
@@ -1054,6 +1038,7 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
     imputed_df = pd.DataFrame(imputed_mask.values, index=flow_matrix.index, columns=flow_matrix.columns)
     print("Flow matrix shape after imputation:", flow_df.shape)
     print("Imputed mask shape:", imputed_df.shape)
+    
     try:
         flow_values = np.stack(
             [flow_df.xs(scat, level='scat_id', axis=1).values for scat in scat_ids],
@@ -1069,28 +1054,31 @@ def preprocess_traffic_data(spatial_file, temporal_file, value_col="flow"):
         print(f"Error during reshaping flow_values or imputed_values: {e}")
         raise
     missing_after = flow_df.isna().sum().sum()
+
     if missing_after > 0:
         print(f"Warning: {missing_after} missing values remain in flow data")
     else:
         print("All flow values have been successfully imputed")
+
     time_features = temporal_features.values[:, None, :]
     print("Time features shape:", time_features.shape)
+    
     try:
         data_tensor = np.concatenate([
-            flow_values[..., :1],
-            imputed_values[..., :1],
-            np.broadcast_to(time_features, 
+            flow_values,  # Include all directions
+            imputed_values,  # Include imputed flags for all directions
+            np.broadcast_to(time_features,
                            (time_features.shape[0], flow_values.shape[1], time_features.shape[2]))
         ], axis=-1)
     except Exception as e:
         print(f"Error during data_tensor creation: {e}")
         raise
     print("\nFinal tensor shape:", data_tensor.shape)
-    print("Features: [flow, imputed_flag, hour, weekend, day]")
+    print("Features: [flow (per direction), imputed_flag (per direction), hour, weekend, day]")
     return adj_matrix, data_tensor, scat_ids, coordinates
 
 if __name__ == "__main__":
-    model = EnhancedSTGNN(input_dim=4, num_nodes=41, hidden_dim=64, output_dim=1)  
+    model = EnhancedSTGNN(input_dim=4, num_nodes=41, hidden_dim=32, output_dim=1)
     model = model.to(device)
     # Specify your file paths here
     run_stgnn_pipeline(
@@ -1100,12 +1088,12 @@ if __name__ == "__main__":
         window_size=48,       # 24 time steps as historical context
         horizon=4,           # Predict next 12 time steps
         batch_size=32, 
-        hidden_dim=64,
-        num_layers=3, 
+        hidden_dim=32,
+        num_layers=2,
         dropout=0.1,
         num_epochs=50,
         learning_rate=0.001,
-        patience=20
+        patience=10
     )
 
     
