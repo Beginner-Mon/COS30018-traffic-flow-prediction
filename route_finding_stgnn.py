@@ -587,8 +587,7 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
     scat_ids = sorted(spatial_df['SCATS Number'].unique())
     num_nodes = len(scat_ids)
     scat_to_idx = {scat: i for i, scat in enumerate(scat_ids)}
-    coordinates = {row['SCATS Number']: {'lat': row['Latitude'], 'lon': row['Longitude']} for _, row in
-                   spatial_df.iterrows()}
+    coordinates = {row['SCATS Number']: {'lat': row['Latitude'], 'lon': row['Longitude']} for _, row in spatial_df.iterrows()}
 
     distances = {}
     for i, scat1 in enumerate(scat_ids):
@@ -598,11 +597,11 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
                                           coordinates[scat2]['lat'], coordinates[scat2]['lon'])
                 distances[(scat1, scat2)] = dist
 
-    directions = sorted(temporal_df['direction'].unique())  # Should be 8 directions
+    directions = sorted(temporal_df['direction'].unique())
     num_directions_model = len(directions)
 
     if scaler_path is None:
-        scaler_path = "./results/scaler.pt"  # Use the new scaler from training
+        scaler_path = "./results/scaler.pt"
 
     if os.path.exists(scaler_path):
         scaler = torch.load(scaler_path, map_location=torch.device('cpu'), weights_only=False)
@@ -612,24 +611,23 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
         raise FileNotFoundError(f"Scaler not found at {scaler_path}. Please train the model first.")
 
     embedding_dim = 16
-    input_dim = num_directions_model * 2 + embedding_dim * 2 + 1  # 8*2 + 16*2 + 1 = 49
+    input_dim = num_directions_model * 2 + embedding_dim * 2 + 1
     model = EnhancedSTGNN(
-        input_dim=input_dim,  # 49
-        num_nodes=num_nodes,  # 41
+        input_dim=input_dim,
+        num_nodes=num_nodes,
         hidden_dim=64,
-        output_dim=num_directions_model,  # 8
+        output_dim=num_directions_model,
         num_layers=3,
         dropout=0.1,
         window_size=48,
         horizon=4,
-        embedding_dim=embedding_dim  # 16
+        embedding_dim=embedding_dim
     ).to(device)
 
     checkpoint = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
 
-    # Build adjacency matrix for the model (not for routing graph)
     adj_matrix = np.zeros((num_nodes, num_nodes), dtype=int)
     for _, row in spatial_df.iterrows():
         node = scat_to_idx[row['SCATS Number']]
@@ -638,12 +636,10 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
             if nbr in scat_to_idx:
                 adj_matrix[node, scat_to_idx[nbr]] = 1
                 adj_matrix[scat_to_idx[nbr], node] = 1
-    print(f"Number of connections in adj_matrix (excluding diagonal): {np.sum(adj_matrix) - num_nodes}")
     static_adj = build_hybrid_adjacency_matrix(nodes=scat_ids, network_data=adj_matrix, coordinates=coordinates,
                                                threshold_distance=5.0)
     static_adj_tensor = torch.FloatTensor(static_adj).to(device)
 
-    # Predict flows
     start_time = pd.to_datetime(start_time_str, format='%d-%m-%Y %H:%M')
     input_tensor, num_directions = prepare_input_data(temporal_df, start_time, window_size=48, num_nodes=num_nodes,
                                                       embedding_dim=embedding_dim)
@@ -660,58 +656,32 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
     flows_interpolated = flows_interpolated[0]
     uncertainties_interpolated = uncertainties_interpolated[0]
     flows_interpolated_agg = flows_interpolated.sum(axis=-1)
-    uncertainties_interpolated_agg = uncertainties_interpolated.sum(axis=-1)
 
-    # Build the routing graph G strictly based on Neighbours
-    G = nx.Graph()  # Undirected graph
+    G = nx.Graph()
     for scat in scat_ids:
         G.add_node(scat)
-    print("Building graph G based on Neighbours...")
-    print(f"Number of nodes in G: {G.number_of_nodes()}")
-    edges_added = 0
-    flows_at_start = flows_interpolated_agg[0]  # Flows at the start time
+    flows_at_start = flows_interpolated_agg[0]
     for _, row in spatial_df.iterrows():
         scat1 = row['SCATS Number']
         idx1 = scat_to_idx[scat1]
         neighbors = [int(n) for n in str(row['Neighbours']).split(';') if n.strip()]
         for scat2 in neighbors:
             if scat2 in scat_to_idx:
-                idx2 = scat_to_idx[scat2]
                 dist = distances.get((scat1, scat2), float('inf'))
                 if dist != float('inf'):
                     flow = flows_at_start[idx1]
                     travel_time = compute_travel_time(dist, flow)
                     G.add_edge(scat1, scat2, weight=travel_time, distance=dist)
-                    edges_added += 1
-    print(f"Number of edges in G: {edges_added}")
-    print("Edges in G:", list(G.edges(data=True)))
 
-    # Check connected components
-    components = list(nx.connected_components(G))
-    print(f"Number of connected components: {len(components)}")
-    for idx, component in enumerate(components):
-        print(f"Component {idx + 1}: {component}")
-        if start_scat in component and dest_scat in component:
-            print(f"Start {start_scat} and destination {dest_scat} are in the same component.")
-        else:
-            print(f"Start {start_scat} and destination {dest_scat} are in different components.")
-            print("Cannot find a path because the nodes are not connected.")
-            return
-
-    print(f"Start SCATS {start_scat} in graph: {start_scat in G.nodes}")
-    print(f"Destination SCATS {dest_scat} in graph: {dest_scat in G.nodes}")
-
-    # Compute paths
     paths = find_shortest_paths_yen(G, start_scat, dest_scat, k=5)
-    print(f"Found {len(paths)} paths between {start_scat} and {dest_scat}")
+    if not paths:
+        return {'routes': []}  # Return empty routes list if no paths found
 
-    # Compute time-dependent travel times
     output = compute_time_dependent_travel_times(
         paths, flows_interpolated_agg, start_time, scat_to_idx, distances,
         crowd_window_minutes=crowd_window_minutes, flow_threshold=flow_threshold
     )
 
-    # Remove duplicates by converting paths to tuples and using a set
     seen_paths = set()
     unique_output = []
     for details in output:
@@ -719,37 +689,24 @@ def route_finding_stgnn(spatial_file, temporal_file, model_path, start_scat, des
         if path_tuple not in seen_paths:
             seen_paths.add(path_tuple)
             unique_output.append(details)
-
-    # Sort by total travel time and take up to 5 routes
     unique_output.sort(key=lambda x: x['total_travel_time'])
     unique_output = unique_output[:5]
 
-    # Display the routes
-    if not unique_output:
-        print(f"No routes found between SCATS {start_scat} and SCATS {dest_scat}.")
-    else:
-        for path_idx, details in enumerate(unique_output):
-            print(f"\nRoute {path_idx + 1}:")
-            print(f"  Path: {' -> '.join(map(str, details['path']))}")
-            print(f"  Total Travel Time: {details['total_travel_time']:.1f} minutes")
-            print(f"  Total Distance: {details['total_distance']:.1f} km")
-            segment_times_str = ", ".join([f"{seg[0]}: {seg[1]:.1f} min" for seg in details['segment_times']])
-            print(f"  Segment Times: {segment_times_str}")
+    # Format routes for JSON response
+    routes = []
+    for idx, details in enumerate(unique_output, 1):
+        route = {
+            'route_number': idx,
+            'path': [str(node) for node in details['path']],
+            'travel_time_minutes': round(details['total_travel_time'], 2),
+            'total_distance_km': round(details['total_distance'], 2),
+            'segment_times': {seg[0]: round(seg[1], 2) for seg in details['segment_times']},
+            'crowded_nodes': [{'node': str(node), 'time': time} for node, time in details['crowded_nodes']],
+            'arrival_times': {str(node): round(time, 2) for node, time in details['arrival_times'].items()}
+        }
+        routes.append(route)
 
-        # Display crowded nodes
-        if any(details['crowded_nodes'] for details in unique_output):
-            print(
-                f"\nNOTE: The following sites are predicted to be crowded in the next {crowd_window_minutes} minutes:")
-            crowded = {}
-            for details in unique_output:
-                for node, time in details['crowded_nodes']:
-                    if node not in crowded or time < crowded[node]:
-                        crowded[node] = time
-            for node, time in sorted(crowded.items(), key=lambda x: x[1]):
-                print(f"- SCATS {node} at {time}")
-        else:
-            print(f"\nNo sites are predicted to be crowded in the next {crowd_window_minutes} minutes.")
-
+    return {'routes': routes}  # Return JSON-compatible dictionary
 if __name__ == "__main__":
     spatial_df = pd.read_csv("traffic_network2.csv")
     scat_ids = sorted(spatial_df['SCATS Number'].unique())
@@ -787,7 +744,8 @@ if __name__ == "__main__":
         except ValueError:
             print("Error: Invalid date format. Please use DD-MM-YYYY H:MM (e.g., 26-10-2006 8:00).")
 
-    route_finding_stgnn(
+    # Call the function and get the result
+    result = route_finding_stgnn(
         spatial_file="traffic_network2.csv",
         temporal_file="TrainingDataAdaptedOutput.csv",
         model_path="results/best_model.pt",
@@ -795,6 +753,36 @@ if __name__ == "__main__":
         dest_scat=dest_scat,
         start_time_str=start_time_str,
         scaler_path="results/scaler.pt",
-        crowd_window_minutes=30,  # Try increasing to 60 if still not appearing
-        flow_threshold=1000       # Try lowering to 500 if still not appearing
+        crowd_window_minutes=30,
+        flow_threshold=1000
     )
+
+    # Print results for terminal use
+    routes = result['routes']
+    if not routes:
+        print(f"\nNo routes found between SCATS {start_scat} and SCATS {dest_scat}.")
+    else:
+        for route in routes:
+            print(f"\nRoute {route['route_number']}:")
+            print(f"  Path: {' -> '.join(route['path'])}")
+            print(f"  Total Travel Time: {route['travel_time_minutes']} minutes")
+            print(f"  Total Distance: {route['total_distance_km']} km")
+            segment_times_str = ", ".join([f"{k}: {v} min" for k, v in route['segment_times'].items()])
+            print(f"  Segment Times: {segment_times_str}")
+            if route['crowded_nodes']:
+                crowded_nodes_str = ", ".join([f"{n['node']} at {n['time']}" for n in route['crowded_nodes']])
+                print(f"  Crowded Nodes: {crowded_nodes_str}")
+
+        # Summarize crowded nodes
+        if any(route['crowded_nodes'] for route in routes):
+            print(f"\nNOTE: The following sites are predicted to be crowded in the next 30 minutes:")
+            crowded = {}
+            for route in routes:
+                for node_info in route['crowded_nodes']:
+                    node, time = node_info['node'], node_info['time']
+                    if node not in crowded or time < crowded[node]:
+                        crowded[node] = time
+            for node, time in sorted(crowded.items(), key=lambda x: x[1]):
+                print(f"- SCATS {node} at {time}")
+        else:
+            print(f"\nNo sites are predicted to be crowded in the next 30 minutes.")

@@ -1,8 +1,8 @@
-// src/Route.js
 import React, { useState } from 'react';
 
-const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, routes, setSelectedRoute, setLocation }) => {
+const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, routes, setSelectedRoute, setLocation, setRouteMethod }) => {
     const [selectedLocation, setSelectedLocation] = useState('melbourne'); // Default to Melbourne
+    const [routeMethod, setLocalRouteMethod] = useState('route_finding'); // Default to route_finding
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -10,7 +10,7 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
         const destination = e.target.destination.value;
         setSource(source);
         setDestination(destination);
-        onFindRoutes();
+        onFindRoutes(routeMethod); // Pass the selected method to onFindRoutes
     };
 
     const handleRouteClick = (route) => {
@@ -20,20 +20,30 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
     const handleLocationChange = (e) => {
         const newLocation = e.target.value;
         setSelectedLocation(newLocation);
-        setLocation(newLocation); // Pass the selected location to MapComponent
+        setLocation(newLocation);
+    };
+
+    const handleRouteMethodChange = (e) => {
+        const newMethod = e.target.value;
+        setLocalRouteMethod(newMethod);
+        setRouteMethod(newMethod); // Update the parent component's state
+    };
+
+    const formatTravelTime = (minutes) => {
+        const wholeMinutes = Math.floor(minutes);
+        const decimalPart = minutes - wholeMinutes;
+        const seconds = Math.round(decimalPart * 60);
+        return `${wholeMinutes} minutes and ${seconds} seconds`;
     };
 
     return (
         <div className="route-component">
             <h1 className='route-title'>
-
                 <select className='select-title'
                     value={selectedLocation}
                     onChange={handleLocationChange}
-
                 >
                     <option value="melbourne">Melbourne</option>
-                    <option value="hcm">Ho Chi Minh City</option>
                 </select>
             </h1>
             <form onSubmit={handleSubmit}>
@@ -59,7 +69,20 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
                         </select>
                     </div>
                 </div>
-                <button className='submit-button' type="submit">Find Routes</button>
+                {/* New dropdown for selecting route method */}
+                <div className='route-container' style={{ marginTop: '10px' }}>
+                    <select
+                        className='route-select'
+                        value={routeMethod}
+                        onChange={handleRouteMethodChange}
+                    >
+                        <option value="route_finding">Basic Route Finding</option>
+                        <option value="route_finding_stgnn">STGNN Route Finding</option>
+                    </select>
+                </div>
+                <button className='submit-button' type="submit">
+                    {routeMethod === 'route_finding' ? 'Find Routes' : 'Find STGNN Routes'}
+                </button>
             </form>
 
             {routes.length > 0 && (
@@ -82,7 +105,7 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f0f0f0'}
                         >
                             <strong>Route {route.route_number}:</strong> {route.path.join(' -> ')}<br />
-                            <span>Travel Time: {route.travel_time_minutes.toFixed(2)} minutes</span>
+                            <span>Travel Time: {formatTravelTime(route.travel_time_minutes)}</span>
                         </div>
                     ))}
                 </div>

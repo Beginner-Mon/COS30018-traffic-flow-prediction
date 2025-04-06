@@ -67,15 +67,15 @@
   all: unset;
   margin-top: 30px;
   padding: 10px;
-  background-color: violet;
+  background-color: blue;
   color: white;
   border-radius: 10px;
   cursor: pointer;
-  border: 1px solid violet;
+  border: 1px solid blue;
   transition: .2s ease all;
 }
 
 .submit-button:hover {
   background-color: white;
-  color: violet;
+  color: blue;
 }

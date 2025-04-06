@@ -1,4 +1,3 @@
-// src/MapComponent.js
 import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
@@ -13,7 +12,6 @@ L.Icon.Default.mergeOptions({
     shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
 });
 
-// Custom red icon for destination
 const destinationIcon = new L.Icon({
     iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
     iconUrl: require('leaflet/dist/images/marker-icon.png'),
@@ -32,6 +30,7 @@ const MapComponent = () => {
     const [scatData, setScatData] = useState({});
     const [selectedRoute, setSelectedRoute] = useState(null);
     const [location, setLocation] = useState('melbourne');
+    const [routeMethod, setRouteMethod] = useState('route_finding'); // New state for route method
     const mapRef = useRef(null);
 
     useEffect(() => {
@@ -66,18 +65,20 @@ const MapComponent = () => {
         fetchScatData();
     }, [location]);
 
-    const fetchRoutes = async () => {
+    const fetchRoutes = async (method) => {
         if (!source || !destination) {
             console.error('Source or destination not selected');
             setRoutes([]);
             return;
         }
+
+        const endpoint = method === 'route_finding' ? '/find_routes' : '/find_routes_stgnn';
+        const payload = method === 'route_finding'
+            ? { source, destination, location }
+            : { source, destination, start_time: "26-10-2006 8:00" }; // Hardcoded for now, adjust as needed
+
         try {
-            const response = await axios.post('http://localhost:5000/find_routes', {
-                source: source,
-                destination: destination,
-                location: location,
-            }, {
+            const response = await axios.post(`http://localhost:5000${endpoint}`, payload, {
                 headers: {
                     'Content-Type': 'application/json',
                 },
@@ -93,7 +94,7 @@ const MapComponent = () => {
                 setSelectedRoute(response.data.routes[0]);
             }
         } catch (error) {
-            console.error('Error fetching routes:', error);
+            console.error(`Error fetching routes from ${endpoint}:`, error);
             setRoutes([]);
             setSelectedRoute(null);
         }
@@ -101,9 +102,9 @@ const MapComponent = () => {
 
     useEffect(() => {
         if (source && destination) {
-            fetchRoutes();
+            fetchRoutes(routeMethod);
         }
-    }, [source, destination]);
+    }, [source, destination, routeMethod]);
 
     const getPolylinePositions = (path) => {
         return path.map(scatId => {
@@ -125,7 +126,6 @@ const MapComponent = () => {
         } else if (value === 'destination') {
             setDestination(scatId);
         }
-        // Reset the select to "Select action" after choosing
         event.target.value = '';
     };
 
@@ -232,6 +232,7 @@ const MapComponent = () => {
                 routes={routes}
                 setSelectedRoute={setSelectedRoute}
                 setLocation={setLocation}
+                setRouteMethod={setRouteMethod} // Pass setRouteMethod to RouteComponent
             />
         </>
     );
