@@ -1,5 +1,5 @@
 from keras import Sequential, Model, Input
-from keras.api.layers import Dense, Dropout, Activation, LSTM, GRU
+from keras.api.layers import Dense, Dropout, Activation, LSTM, GRU, Bidirectional
 
 def get_lstm(units):
     """LSTM(Long Short-Term Memory)
@@ -34,6 +34,16 @@ def get_gru(units):
     model.add(Dense(units[3], activation='sigmoid'))
     
     return model
+
+def get_bilstm(units):
+    model = Sequential()
+    model.add(Bidirectional(LSTM(units[1], return_sequences=True), input_shape=(units[0], 1)))
+    model.add(Bidirectional(LSTM(units[2])))
+    model.add(Dropout(0.2))
+    model.add(Dense(units[3], activation='sigmoid'))
+
+    return model
+
 
 def _get_sae(inputs, hidden, output):
     """SAE(Auto-Encoders)

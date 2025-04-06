@@ -1,15 +1,81 @@
 .App {
-
   position: relative;
 }
 
 .route-component {
-
   position: absolute;
   height: 100%;
   top: 0;
-  right: 0;
+  left: 0;
   z-index: 10000;
   background-color: white;
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: max-content;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.route-title {
+  all: unset;
+  font-size: 2rem;
+  color: black;
+}
+
+.route-select {
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: black;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.route-title {
+  font-size: 2rem;
+  font-weight: 500;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+.select-title {
+  text-decoration: none;
+  outline: none;
+  border: none;
+  font-size: 2rem;
+  font-weight: 500;
+  background: transparent;
+  margin-left: 10px;
+  cursor: pointer;
+}
+
+.select-title option {
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.submit-button {
+  all: unset;
+  margin-top: 30px;
+  padding: 10px;
+  background-color: blue;
+  color: white;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid blue;
+  transition: .2s ease all;
+}
+
+.submit-button:hover {
+  background-color: white;
+  color: blue;
 }

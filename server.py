@@ -1,46 +1,69 @@
 from flask import Flask, request, jsonify
+import pandas as pd
+from route_finding import find_top_routes, get_all_scats_data
+from route_finding_stgnn import route_finding_stgnn  # Import the STGNN route finder
 from flask_cors import CORS
 
+# Khởi tạo Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})  # Restrict to React origin
 
-@app.route('/submit', methods=['POST'])
-def submit_data():
-    data = request.json  # Get JSON data from the request
-    lat = data.get('lat')
-    long = data.get('long')
-   
-    
-    # Here you can process the data (e.g., save to a database)
-    import logging
+# Existing endpoint for find_routes
+@app.route('/find_routes', methods=['POST'])
+def find_routes():
+    data = request.get_json()
+    origin = data.get('source')
+    destination = data.get('destination')
 
-logging.basicConfig(level=logging.INFO)
+    if not origin or not destination:
+        return jsonify({'error': 'Missing source or destination'}), 400
 
-@app.route('/submit', methods=['POST'])
-def submit_data():
-    logging.info('Received POST request at /submit endpoint')
-    data = request.json  # Get JSON data from the request
-    lat = data.get('lat')
-    long = data.get('long')
-    logging.info('Received data: lat=%s, long=%s', lat, long)
-    
-    # Here you can process the data (e.g., save to a database)
-    
-    logging.info('Data processed successfully')
+    routes, error = find_top_routes(origin, destination)
+    print(routes, error)
+    if error:
+        return jsonify({'error': error}), 404
+    return jsonify({'routes': routes}), 200
+
+# Existing endpoint for SCATS data
+@app.route('/get_scats_number', methods=['GET'])
+def get_scats_number():
+    scats = get_all_scats_data()
     return jsonify({
-        'message': 'Data received successfully',
-        'data': {
-            'lat': lat,
-            'long': long
-        }
-    })
-    return jsonify({
-        'message': 'Data received successfully',
-        'data': {
-            'lat': lat,
-            'long': long
-        }
-    })
+        'scats': scats
+    }), 200
+@app.route('/find_routes_stgnn', methods=['POST'])
+def find_routes_stgnn():
+    data = request.get_json()
+    origin = data.get('source')
+    destination = data.get('destination')
+    start_time_str = data.get('start_time')
 
+    if not origin or not destination or not start_time_str:
+        return jsonify({'error': 'Missing source, destination, or start_time'}), 400
+
+    try:
+        origin = int(origin)
+        destination = int(destination)
+        pd.to_datetime(start_time_str, format='%d-%m-%Y %H:%M')
+    except ValueError as e:
+        return jsonify({'error': f'Invalid input: {str(e)}'}), 400
+
+    try:
+        result = route_finding_stgnn(
+            spatial_file="traffic_network2.csv",
+            temporal_file="TrainingDataAdaptedOutput.csv",
+            model_path="results/best_model.pt",
+            start_scat=origin,
+            dest_scat=destination,
+            start_time_str=start_time_str,
+            scaler_path="results/scaler.pt"
+        )
+        if not result['routes']:
+            return jsonify({'error': 'No routes found between the specified SCATS IDs'}), 404
+        return jsonify(result), 200
+    except Exception as e:
+        print(f"Error in find_routes_stgnn: {str(e)}")
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
+# Chạy server
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False, host='0.0.0.0', port=5000)

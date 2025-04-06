@@ -107,8 +107,9 @@ def main():
     lstm = load_model(f'model/lstm.keras', custom_objects=custom_objects)
     gru = load_model(f'model/gru.keras', custom_objects=custom_objects)
     saes = load_model(f'model/saes.keras', custom_objects=custom_objects)
-    models = [lstm, gru, saes]
-    names = ['LSTM', 'GRU', 'SAEs']
+    bilstm = load_model(f'model/bilstm.keras', custom_objects=custom_objects)
+    models = [lstm, gru, saes,bilstm]
+    names = ['LSTM', 'GRU', 'SAEs', 'BiLSTM']
 
     lag = 12
     file = 'Scats2006.xls'
