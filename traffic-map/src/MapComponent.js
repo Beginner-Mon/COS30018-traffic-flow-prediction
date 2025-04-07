@@ -3,13 +3,8 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker } from '
 import L from 'leaflet';
 import axios from 'axios';
 import RouteComponent from './Route';
-<<<<<<< HEAD
-import axios from 'axios'
-// Fix the default marker icon issue
-=======
 
 // Fix leaflet marker icons
->>>>>>> nguyen
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
@@ -28,16 +23,6 @@ const destinationIcon = new L.Icon({
 });
 
 const MapComponent = () => {
-<<<<<<< HEAD
-    const position = [-37.814, 144.96332]; // Center of Melbourne
-    const [randomPositions, setRandomPositions] = useState([]);
-    const [polylinePositions, setPolylinePositions] = useState([]);
-
-    // Define latitude and longitude ranges for Melbourne
-    const latRange = [-37.840, -37.780]; // Approximate latitude range for Melbourne
-    const lngRange = [144.910, 145.020]; // Approximate longitude range for Melbourne
-    const [response, setResponse] = useState(null)
-=======
     const [initialPosition] = useState([-37.82327, 145.04517]);
     const [routes, setRoutes] = useState([]);
     const [source, setSource] = useState("");
@@ -47,25 +32,7 @@ const MapComponent = () => {
     const [location, setLocation] = useState('melbourne');
     const [routeMethod, setRouteMethod] = useState('route_finding'); // New state for route method
     const mapRef = useRef(null);
->>>>>>> nguyen
 
-    const fetchData = async (event) => {
-        event.preventDefault();
-
-        const data = {
-            "lat": position[0],
-            "long": position[1]
-        }
-
-        try {
-            const res = await axios.post('http://127.0.0.1:5000/submit', data);
-            setResponse(res.data)
-            console.log(res.data)
-
-        } catch (error) {
-            console.log(error)
-        }
-    }
     useEffect(() => {
         const newPosition = location === 'melbourne'
             ? [-37.86703, 145.09159]
@@ -162,7 +129,6 @@ const MapComponent = () => {
         event.target.value = '';
     };
 
-
     return (
         <>
             <MapContainer
@@ -250,15 +216,6 @@ const MapComponent = () => {
                         </CircleMarker>
                     )
                 ))}
-<<<<<<< HEAD
-                <Circle center={position} radius={200} pathOptions={{ color: 'blue', fillOpacity: 0.5 }} />
-
-                <Polyline positions={polylinePositions} pathOptions={{ color: 'blue', weight: 3 }} />
-            </MapContainer>
-
-            <RouteComponent fetchData={fetchData} response={response} />
-
-=======
                 {selectedRoute && (
                     <Polyline
                         positions={getPolylinePositions(selectedRoute.path)}
@@ -277,7 +234,6 @@ const MapComponent = () => {
                 setLocation={setLocation}
                 setRouteMethod={setRouteMethod} // Pass setRouteMethod to RouteComponent
             />
->>>>>>> nguyen
         </>
     );
 };

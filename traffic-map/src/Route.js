@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-import React from "react";
-const RouteComponent = ({ fetchData, response }) => {
-=======
 import React, { useState } from 'react';
 
 const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, routes, setSelectedRoute, setLocation, setRouteMethod }) => {
@@ -39,7 +35,6 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
         const seconds = Math.round(decimalPart * 60);
         return `${wholeMinutes} minutes and ${seconds} seconds`;
     };
->>>>>>> nguyen
 
     return (
         <div className="route-component">
@@ -90,35 +85,6 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
                 </button>
             </form>
 
-<<<<<<< HEAD
-            <p>select source</p>
-            <select id="mySelect">
-                <option value="">--Please choose an option--</option>
-                <option value="option1">Option 1</option>
-                <option value="option2">Option 2</option>
-                <option value="option3">Option 3</option>
-            </select>
-            <p>select destination</p>
-            <select id="mySelect">
-                <option value="">--Please choose an option--</option>
-                <option value="option1">Option 1</option>
-                <option value="option2">Option 2</option>
-                <option value="option3">Option 3</option>
-            </select>
-            <button onClick={fetchData}>get location</button>
-            <div>
-                {
-                    response && (
-                        <>
-                            <p>latitude: {response.data.lat}</p>
-                            <p>longitude: {response.data.long}</p>
-                        </>
-                    )
-
-                }
-
-            </div>
-=======
             {routes.length > 0 && (
                 <div style={{ marginTop: '20px' }}>
                     <h2>Routes Found:</h2>
@@ -144,7 +110,6 @@ const RouteComponent = ({ scatData, setSource, setDestination, onFindRoutes, rou
                     ))}
                 </div>
             )}
->>>>>>> nguyen
         </div>
     );
 };
